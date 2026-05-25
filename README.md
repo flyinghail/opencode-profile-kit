@@ -23,6 +23,74 @@ That gives you:
 
 This tool is for people who want OpenCode profile management to be boring, local, transparent, and scriptable.
 
+## Table of Contents
+
+- [Install](#install)
+- [Layout](#layout)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Basic usage](#basic-usage)
+- [Clone](#clone)
+- [Shared config links](#shared-config-links)
+- [Profile launcher commands](#profile-launcher-commands)
+- [Registry](#registry)
+- [Completion](#completion)
+- [Doctor](#doctor)
+
+## Install
+
+Default command name:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main/install.sh | bash
+```
+
+`ocp` is the default CLI command name, but installation can use a custom command name:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main/install.sh | CLI_NAME=ocpk bash
+```
+
+Manual local install from checkout:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sfn "$PWD/bin/ocp" ~/.local/bin/ocp
+```
+
+## Layout
+
+Defaults follow XDG-style separation:
+
+```text
+~/.config/opencode-profile-kit/config.env          # user-editable config
+~/.local/share/opencode-profile-kit/state/         # registry/state
+~/.local/share/opencode-profile-kit/bin/ocp        # installed source by install.sh
+~/.opencode-profiles/<profile>/                    # profile directories
+```
+
+Default profile directory:
+
+```text
+~/.opencode-profiles
+```
+
+Default OpenCode global config directory used by `link`:
+
+```text
+~/.config/opencode
+```
+
+## Configuration
+
+Create `~/.config/opencode-profile-kit/config.env` to override defaults:
+
+```bash
+OC_PROFILES_DIR="$HOME/.opencode-profiles"
+OC_GLOBAL_DIR="$HOME/.config/opencode"
+OC_BIN_DIR="$HOME/.local/bin"
+```
+
 ## Commands
 
 ```text
@@ -48,60 +116,6 @@ ocp refresh
 ocp doctor [profile]
 ocp completion <bash|zsh> [command-name]
 ocp config
-```
-
-## Layout
-
-Defaults follow XDG-style separation:
-
-```text
-~/.config/opencode-profile-kit/config.env          # user-editable config
-~/.local/share/opencode-profile-kit/state/         # registry/state
-~/.local/share/opencode-profile-kit/bin/ocp        # installed source by install.sh
-~/.opencode-profiles/<profile>/                     # profile directories
-```
-
-Default profile directory:
-
-```text
-~/.opencode-profiles
-```
-
-Default OpenCode global config directory used by `link`:
-
-```text
-~/.config/opencode
-```
-
-## Install
-
-Default command name:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main/install.sh | bash
-```
-
-Use a custom command name:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main/install.sh | CLI_NAME=ocpk bash
-```
-
-Manual local install from checkout:
-
-```bash
-mkdir -p ~/.local/bin
-ln -sfn "$PWD/bin/ocp" ~/.local/bin/ocp
-```
-
-## Configuration
-
-Create `~/.config/opencode-profile-kit/config.env` to override defaults:
-
-```bash
-OC_PROFILES_DIR="$HOME/.opencode-profiles"
-OC_GLOBAL_DIR="$HOME/.config/opencode"
-OC_BIN_DIR="$HOME/.local/bin"
 ```
 
 ## Basic usage
@@ -149,18 +163,18 @@ Show the current profile from `OPENCODE_CONFIG_DIR`:
 ocp which
 ```
 
-## Clone / template workflow
+## Clone
 
-Create a profile from a template:
-
-```bash
-ocp new omo-sp --from omo
-```
-
-Clone a profile:
+Create a new profile by cloning an existing profile:
 
 ```bash
 ocp clone omo omo-sp
+```
+
+`new --from` is a convenience alias for `clone`:
+
+```bash
+ocp new omo-sp --from omo
 ```
 
 By default, clone preserves symlinks and skips common runtime/cache paths:
