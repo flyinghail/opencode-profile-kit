@@ -283,10 +283,7 @@ Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
 For those tools, use `capture`:
 
 ```bash
-git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/gstack
-cd ~/gstack
-ocp capture gstack -- ./setup --host opencode
-
+ocp capture my-profile -- npx <package> install
 ```
 
 `capture` will:
@@ -355,13 +352,13 @@ ocp rewrite-paths my-profile
 Create a new profile by cloning an existing profile:
 
 ```bash
-ocp clone my-profile my-profile-sp
+ocp clone my-profile other-profile
 ```
 
 `new --from` is a convenience alias for `clone`:
 
 ```bash
-ocp new my-profile-sp --from my-profile
+ocp new other-profile --from my-profile
 ```
 
 By default, clone preserves symlinks and skips common runtime/cache paths:
@@ -373,7 +370,7 @@ session tmp logs semantic index cache .cache
 Copy everything:
 
 ```bash
-ocp clone my-profile-s gsd --full
+ocp clone my-profile other-profile --full
 ```
 
 ---
