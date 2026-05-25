@@ -157,6 +157,26 @@ Clear it:
 eval "$(ocp clear)"
 ```
 
+For convenience, you can define shell functions in `~/.bashrc` or `~/.zshrc`:
+
+```bash
+ocd() {
+  eval "$(ocp env "$1" bash)"
+}
+
+ocr() {
+  eval "$(ocp clear bash)"
+}
+```
+
+Then use:
+
+```bash
+ocd omo
+... <install something>
+ocr
+```
+
 Show the current profile from `OPENCODE_CONFIG_DIR`:
 
 ```bash
