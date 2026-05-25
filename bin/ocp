@@ -47,13 +47,17 @@ Usage:
   ocp path <profile>                          Print profile path
   ocp refresh                                 Rebuild registry from profile dirs
   ocp doctor [profile]                        Check installation/profile health
-  ocp completion <bash|zsh> [command-name]    Print shell completion
+  ocp completion <bash|zsh> [--install]       Print/install shell completion
   ocp config                                  Print resolved paths
 USAGE
 }
 
 fail() { echo "ocp: $*" >&2; exit 1; }
 ensure_state() { mkdir -p "$STATE_DIR"; touch "$PROFILES_DB" "$BINS_DB"; }
+
+current_cli_name() {
+  basename "$0"
+}
 
 require_opencode() {
   if ! command -v opencode >/dev/null 2>&1; then
@@ -614,9 +618,86 @@ cmd_rewrite_paths() {
   echo "[ocp] done"
 }
 
+install_bash_completion() {
+  local cli_name="$1"
+  local completions_dir="${BASH_COMPLETION_USER_DIR:-$HOME/.local/share/bash-completion/completions}"
+
+  mkdir -p "$completions_dir"
+  cmd_completion_bash "$cli_name" > "$completions_dir/$cli_name"
+
+  echo "installed bash completion: $completions_dir/$cli_name"
+}
+
+install_zsh_completion() {
+  local cli_name="$1"
+  local completions_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode-profile-kit/completions/zsh"
+  local zshrc="${ZSHRC:-$HOME/.zshrc}"
+
+  mkdir -p "$completions_dir"
+  cmd_completion_zsh "$cli_name" > "$completions_dir/_$cli_name"
+
+  echo "installed zsh completion: $completions_dir/_$cli_name"
+
+  local marker_start="# opencode-profile-kit completion"
+
+  if grep -qF "$marker_start" "$zshrc" 2>/dev/null; then
+    echo "zshrc completion setup already exists: $zshrc"
+    return 0
+  fi
+
+  cat >> "$zshrc" <<EOF
+
+$marker_start
+fpath=("$completions_dir" \$fpath)
+autoload -Uz compinit
+compinit
+EOF
+
+  echo "updated zshrc: $zshrc"
+}
+
 cmd_completion() {
-  local shell="${1:-}" cli_name="${2:-ocp}"
-  case "$shell" in bash) cmd_completion_bash "$cli_name" ;; zsh) cmd_completion_zsh "$cli_name" ;; *) fail "usage: ocp completion <bash|zsh> [command-name]" ;; esac
+  local shell="${1:-}"
+  shift || true
+
+  local install=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --install)
+        install=1
+        shift
+        ;;
+      *)
+        echo "unknown completion option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  local cli_name
+  cli_name="$(current_cli_name)"
+
+  case "$shell" in
+    bash)
+      if [[ "$install" == "1" ]]; then
+        install_bash_completion "$cli_name"
+      else
+        cmd_completion_bash "$cli_name"
+      fi
+      ;;
+    zsh)
+      if [[ "$install" == "1" ]]; then
+        install_zsh_completion "$cli_name"
+      else
+        cmd_completion_zsh "$cli_name"
+      fi
+      ;;
+    *)
+      echo "usage: $cli_name completion <bash|zsh> [--install]" >&2
+      exit 1
+      ;;
+  esac
 }
 
 cmd_config() {

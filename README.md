@@ -130,7 +130,7 @@ ocp list
 ocp path <profile>
 ocp refresh
 ocp doctor [profile]
-ocp completion <bash|zsh> [command-name]
+ocp completion <bash|zsh> [--install]
 ocp config
 ```
 
@@ -463,35 +463,23 @@ ocp refresh
 
 ## Completion
 
-Bash:
+Print completion script:
 
 ```bash
-mkdir -p ~/.local/share/bash-completion/completions
-ocp completion bash ocp > ~/.local/share/bash-completion/completions/ocp
+ocp completion bash
+ocp completion zsh
 ```
 
-Zsh:
+Install completion:
 
 ```bash
-mkdir -p ~/.zfunc
-ocp completion zsh ocp > ~/.zfunc/_ocp
+ocp completion bash --install
+ocp completion zsh --install
 ```
 
-Then ensure this exists in `.zshrc` if you use zsh:
+The generated completion uses the current command name automatically.
 
-```zsh
-fpath=(~/.zfunc $fpath)
-autoload -Uz compinit
-compinit
-```
-
-If installed with another command name:
-
-```bash
-CLI_NAME=ocpk bash install.sh
-ocpk completion bash ocprof > ~/.local/share/bash-completion/completions/ocpk
-ocpk completion zsh ocprof > ~/.zfunc/_ocpk
-```
+For zsh, `--install` will appending the required `fpath` / `compinit` setup to `~/.zshrc`.
 
 ---
 
