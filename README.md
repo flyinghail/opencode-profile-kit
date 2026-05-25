@@ -23,24 +23,29 @@ That gives you:
 
 This tool is for people who want OpenCode profile management to be boring, local, transparent, and scriptable.
 
+---
+
 ## Table of Contents
 
-- [Install](#install)
 - [Layout](#layout)
+- [Install](#install)
 - [Configuration](#configuration)
 - [Commands](#commands)
-- [Basic usage](#basic-usage)
-- [Tool Compatibility](#tool-compatibility)
+- [Basic Usage](#basic-usage)
+- [Installing Into a Profile](#installing-into-a-profile)
+- [Capturing Global Installers](#capturing-global-installers)
+- [Rewriting Hardcoded Paths](#rewriting-hardcoded-paths)
 - [Clone](#clone)
-- [Shared config links](#shared-config-links)
-- [Profile launcher commands](#profile-launcher-commands)
+- [Shared Config Links](#shared-config-links)
+- [Profile Launcher Commands](#profile-launcher-commands)
 - [Registry](#registry)
 - [Completion](#completion)
+- [Optional Shell Helpers](#optional-shell-helpers)
 - [Doctor](#doctor)
 
-## Install
+---
 
-Default command name:
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main/install.sh | bash
@@ -59,6 +64,8 @@ mkdir -p ~/.local/bin
 ln -sfn "$PWD/bin/ocp" ~/.local/bin/ocp
 ```
 
+---
+
 ## Layout
 
 Defaults follow XDG-style separation:
@@ -76,11 +83,13 @@ Default profile directory:
 ~/.opencode-profiles
 ```
 
-Default OpenCode global config directory used by `link`:
+OpenCode global config directory used by `link`:
 
 ```text
 ~/.config/opencode
 ```
+
+---
 
 ## Configuration
 
@@ -88,9 +97,12 @@ Create `~/.config/opencode-profile-kit/config.env` to override defaults:
 
 ```bash
 OC_PROFILES_DIR="$HOME/.opencode-profiles"
-OC_GLOBAL_DIR="$HOME/.config/opencode"
 OC_BIN_DIR="$HOME/.local/bin"
 ```
+
+`OC_PROFILES_DIR` must be under `$HOME`.
+
+---
 
 ## Commands
 
@@ -111,6 +123,9 @@ ocp link-all <path> [--force]
 
 ocp bin <profile> <command-name>
 
+ocp capture <profile> -- <command...>
+ocp rewrite-paths <profile> [path-suffix]
+
 ocp list
 ocp path <profile>
 ocp refresh
@@ -119,107 +134,234 @@ ocp completion <bash|zsh> [command-name]
 ocp config
 ```
 
+---
+
 ## Basic usage
 
 Create a profile:
 
 ```bash
-ocp new omo
+ocp new my-profile
 ```
 
 Run OpenCode with that profile:
 
 ```bash
-ocp run omo
+ocp run my-profile
 ```
 
 Pass arguments to OpenCode:
 
 ```bash
-ocp run omo --port 0
+ocp run my-profile --port 0
 ```
 
-To install something into a specific profile
-```bash
-ocp exec omo -- npx <package> install
-```
-
-Or export the profile into the current shell:
+Run any command inside the profile environment:
 
 ```bash
-eval "$(ocp env omo)"
-ocp exec omo -- npx <package> install
-eval "$(ocp clear)" # clear OPENCODE_CONFIG_DIR
+ocp exec my-profile -- env | grep OPENCODE_CONFIG_DIR
+ocp exec my-profile -- zsh
 ```
 
-For convenience, you can define shell functions in `~/.bashrc` or `~/.zshrc`:
+Export the profile into the current shell:
 
 ```bash
-ocd() {
-  eval "$(ocp env "$1" bash)"
-}
-
-ocr() {
-  eval "$(ocp clear bash)"
-}
+eval "$(ocp env my-profile)"
 ```
 
-Then use it like:
+Clear it:
 
 ```bash
-ocd omo
-ocp exec omo -- npx <package> install
-ocr
+eval "$(ocp clear)"
 ```
 
-Notice:
-
-This uses `eval` because a child process cannot modify the environment of its parent shell.
-
-**Only run this with a trusted local `ocp` installation.** If you prefer not to use `eval`, use `ocp exec` instead.
-
-## Tool Compatibility
-
-Most OpenCode ecosystem tools respect `OPENCODE_CONFIG_DIR`, but not all tools currently support it correctly.
-
-Some tools may still:
-
-- write into `~/.config/opencode`
-- ignore the environment variable
-- partially support profile isolation
-- hardcode global paths internally
-
-In those cases, you may need to:
-
-- manually move files into the profile
-- create symlinks with `ocp link`
-- patch tool configuration
-- override paths through additional environment variables
-
-You can inspect the active profile path with:
+Show the current profile from `OPENCODE_CONFIG_DIR`:
 
 ```bash
 ocp which
 ```
 
-or:
+---
+
+## Installing Into a Profile
+
+Most OpenCode ecosystem tools install configuration, plugins, MCP servers, agents, or runtime files into the current `OPENCODE_CONFIG_DIR`.
+
+To install something into a specific profile:
 
 ```bash
-echo "$OPENCODE_CONFIG_DIR"
+ocp exec my-profile -- npx <package> install
 ```
+
+You can also enter the profile environment first:
+
+```bash
+eval "$(ocp env my-profile)"
+```
+
+Then run the installer normally:
+
+```bash
+npx <package> install
+```
+
+Everything should now install into:
+
+```text
+~/.opencode-profiles/my-profile
+```
+
+instead of the global OpenCode config directory.
+
+This uses `eval` because a child process cannot modify the environment of its parent shell.
+
+**Only run this with a trusted local `ocp` installation.** If you prefer not to use `eval`, use `ocp exec` instead.
+
+---
+
+## Capturing Global Installers
+
+Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
+
+```text
+~/.config/opencode
+```
+
+For those tools, use:
+
+```bash
+ocp capture my-profile -- npx <package> install
+```
+
+`capture` will:
+
+1. backup `~/.config/opencode`
+2. run the installer
+3. copy resulting changes into the target profile
+4. restore the original global config
+
+This allows profile-isolated installation even for tools that hardcode global paths.
+
+`capture` requires `rsync`.
+
+Install it first:
+
+Ubuntu/Debian:
+
+```bash
+sudo apt update && sudo apt install -y rsync
+```
+
+macOS:
+
+```bash
+brew install rsync
+```
+
+Arch:
+
+```bash
+sudo pacman -S rsync
+```
+
+Fedora:
+
+```bash
+sudo dnf install rsync
+```
+
+---
+
+## Capturing Global Installers
+
+Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
+
+```text
+~/.config/opencode
+```
+
+For those tools, use `capture`:
+
+```bash
+git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/gstack
+cd ~/gstack
+ocp capture gstack -- ./setup --host opencode
+
+```
+
+`capture` will:
+
+1. backup the global OpenCode config directory
+2. run the installer
+3. copy resulting changes into the target profile
+4. restore the original global config
+
+This allows profile-isolated installation even for tools that hardcode global paths.
+
+---
+
+## Rewriting Hardcoded Paths
+
+Some installers generate markdown files that contain hardcoded references to the global OpenCode config path.
+
+These references may appear in different forms:
+
+```text
+~/.config/opencode/skills
+$HOME/.config/opencode/agents
+${HOME}/.config/opencode/commands
+/home/user/.config/opencode/plugins
+```
+
+Use `rewrite-paths` to rewrite them into the target profile directory:
+
+```bash
+ocp rewrite-paths my-profile
+```
+
+By default, this rewrites references under:
+
+```text
+/.config/opencode
+```
+
+to the profile directory suffix:
+
+```text
+/.opencode-profiles/my-profile
+```
+
+Only markdown files (`*.md`) are modified.
+
+You can also rewrite only a specific subtree:
+
+```bash
+ocp rewrite-paths my-profile /.config/opencode/skills
+ocp rewrite-paths my-profile /.config/opencode/agents
+ocp rewrite-paths my-profile /.config/opencode/commands
+```
+
+Typical workflow for global-path installers:
+
+```bash
+ocp capture my-profile -- npx <package> install
+ocp rewrite-paths my-profile
+```
+
+---
 
 ## Clone
 
 Create a new profile by cloning an existing profile:
 
 ```bash
-ocp clone omo omo-sp
+ocp clone my-profile my-profile-sp
 ```
 
 `new --from` is a convenience alias for `clone`:
 
 ```bash
-ocp new omo-sp --from omo
+ocp new my-profile-sp --from my-profile
 ```
 
 By default, clone preserves symlinks and skips common runtime/cache paths:
@@ -231,21 +373,23 @@ session tmp logs semantic index cache .cache
 Copy everything:
 
 ```bash
-ocp clone omo-s gsd --full
+ocp clone my-profile-s gsd --full
 ```
+
+---
 
 ## Shared config links
 
 Link a file or directory from `~/.config/opencode` into a profile:
 
 ```bash
-ocp link omo AGENTS.md
+ocp link my-profile AGENTS.md
 ```
 
 Do not overwrite existing profile paths unless `--force` is supplied:
 
 ```bash
-ocp link omo AGENTS.md --force
+ocp link my-profile AGENTS.md --force
 ```
 
 Link into all registered profiles:
@@ -255,26 +399,30 @@ ocp link-all AGENTS.md
 ocp link-all AGENTS.md --force
 ```
 
+---
+
 ## Profile launcher commands
 
 Create a dedicated launcher command:
 
 ```bash
-ocp bin omo oc-omo
+ocp bin my-profile oc-my-profile
 ```
 
 Then run:
 
 ```bash
-oc-omo
-oc-omo --port 0
+oc-my-profile
+oc-my-profile --port 0
 ```
 
 The launcher calls the installed `ocp` path and runs:
 
 ```bash
-ocp run omo "$@"
+ocp run my-profile "$@"
 ```
+
+---
 
 ## Registry
 
@@ -293,19 +441,19 @@ ocp list
 Print profile path:
 
 ```bash
-ocp path omo
+ocp path my-profile
 ```
 
 Remove from registry:
 
 ```bash
-ocp remove omo
+ocp remove my-profile
 ```
 
 Remove from registry and delete the profile directory:
 
 ```bash
-ocp remove omo --delete-dir
+ocp remove my-profile --delete-dir
 ```
 
 Rebuild registry from `OC_PROFILES_DIR`:
@@ -313,6 +461,8 @@ Rebuild registry from `OC_PROFILES_DIR`:
 ```bash
 ocp refresh
 ```
+
+---
 
 ## Completion
 
@@ -346,6 +496,50 @@ ocpk completion bash ocprof > ~/.local/share/bash-completion/completions/ocpk
 ocpk completion zsh ocprof > ~/.zfunc/_ocpk
 ```
 
+---
+
+## Optional Shell Helpers
+
+`ocp env` and `ocp clear` print shell code.
+
+To modify the current shell environment, use `eval`.
+
+For Bash in `~/.bashrc`:
+
+```bash
+ocd() {
+  eval "$(ocp env "$1" bash)"
+}
+
+ocr() {
+  eval "$(ocp clear bash)"
+}
+```
+
+For Zsh in `~/.zshrc`:
+
+```zsh
+ocd() {
+  eval "$(ocp env "$1" zsh)"
+}
+
+ocr() {
+  eval "$(ocp clear zsh)"
+}
+```
+
+Then use:
+
+```bash
+ocd my-profile
+npx <package> install
+ocr
+```
+
+These helpers internally use `eval`.
+
+---
+
 ## Doctor
 
 Check installation health:
@@ -357,7 +551,7 @@ ocp doctor
 Check one profile:
 
 ```bash
-ocp doctor omo
+ocp doctor my-profile
 ```
 
 It reports:

@@ -12,7 +12,7 @@ STATE_DIR="$DATA_DIR/state"
 PROFILES_DB="$STATE_DIR/profiles.tsv"
 BINS_DB="$STATE_DIR/bins.tsv"
 
-OC_GLOBAL_DIR="${OC_GLOBAL_DIR:-$HOME/.config/opencode}"
+OC_GLOBAL_DIR="$HOME/.config/opencode"
 OC_PROFILES_DIR="${OC_PROFILES_DIR:-$HOME/.opencode-profiles}"
 OC_BIN_DIR="${OC_BIN_DIR:-$HOME/.local/bin}"
 OC_RUNTIME_IGNORE_DEFAULT="session tmp logs semantic index cache .cache"
@@ -54,6 +54,87 @@ USAGE
 
 fail() { echo "ocp: $*" >&2; exit 1; }
 ensure_state() { mkdir -p "$STATE_DIR"; touch "$PROFILES_DB" "$BINS_DB"; }
+
+require_opencode() {
+  if ! command -v opencode >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+error: opencode is not installed or not found in PATH
+
+Install OpenCode first:
+
+  https://opencode.ai/docs
+
+After installation, make sure this works:
+
+  opencode --help
+EOF
+    exit 1
+  fi
+}
+
+expand_home_path() {
+  local path="$1"
+
+  case "$path" in
+    "~")
+      printf '%s\n' "$HOME"
+      ;;
+    "~/"*)
+      printf '%s/%s\n' "$HOME" "${path#"~/"}"
+      ;;
+    "\$HOME")
+      printf '%s\n' "$HOME"
+      ;;
+    "\$HOME/"*)
+      printf '%s/%s\n' "$HOME" "${path#"\$HOME/"}"
+      ;;
+    "\${HOME}")
+      printf '%s\n' "$HOME"
+      ;;
+    "\${HOME}/"*)
+      printf '%s/%s\n' "$HOME" "${path#"\${HOME}/"}"
+      ;;
+    *)
+      printf '%s\n' "$path"
+      ;;
+  esac
+}
+
+resolve_profiles_dir() {
+    dir="$(expand_home_path "$OC_PROFILES_DIR")"
+
+  case "$dir" in
+    "$HOME"/*) ;;
+    *)
+      cat >&2 <<EOF
+error: OC_PROFILES_DIR must be under HOME
+
+HOME:
+  $HOME
+
+OC_PROFILES_DIR:
+  $OC_PROFILES_DIR
+
+This tool expects profile directories to live under HOME so paths can be rewritten safely and predictably.
+EOF
+      exit 1
+      ;;
+  esac
+
+  printf '%s\n' "$dir"
+}
+
+profiles_dir_suffix() {
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
+
+  printf '%s\n' "${profiles_dir#"$HOME"}"
+}
+
+profile_replacement_suffix() {
+  local profile="$1"
+  printf '%s/%s\n' "$(profiles_dir_suffix)" "$profile"
+}
 
 ensure_profile_name() {
   local p="${1:-}"
@@ -102,7 +183,9 @@ profile_lookup_path() {
   ensure_state
   path="$(awk -F '\t' -v p="$profile" '$1 == p {print $2; found=1; exit} END {if (!found) exit 1}' "$PROFILES_DB" 2>/dev/null || true)"
   [[ -n "$path" ]] && { echo "$path"; return 0; }
-  fallback="$OC_PROFILES_DIR/$profile"
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
+  fallback="$profiles_dir/$profile"
   [[ -d "$fallback" ]] && echo "$fallback"
 }
 
@@ -141,7 +224,9 @@ cmd_new() {
       *) fail "unknown option for new: $1" ;;
     esac
   done
-  local dir="$OC_PROFILES_DIR/$profile"
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
+  local dir="$profile_dir/$profile"
   [[ ! -e "$dir" ]] || fail "profile path already exists: $dir"
   mkdir -p "$dir"
   if [[ -n "$template" ]]; then
@@ -163,8 +248,10 @@ cmd_clone() {
     esac
   done
   local src dst
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
   src="$(require_profile_path "$src_profile")"
-  dst="$OC_PROFILES_DIR/$dst_profile"
+  dst="$profile_dir/$dst_profile"
   [[ ! -e "$dst" ]] || fail "destination already exists: $dst"
   copy_profile "$src" "$dst" "$full"
   write_manifest "$dst" "$dst_profile" "$src_profile"
@@ -187,7 +274,17 @@ cmd_remove() {
   if [[ "$delete_dir" == "1" && -n "$dir" ]]; then rm -rf "$dir"; echo "removed: $profile and deleted $dir"; else echo "removed from registry: $profile"; fi
 }
 
-cmd_run() { local profile="${1:-}" dir; shift || true; dir="$(require_profile_path "$profile")"; export OPENCODE_CONFIG_DIR="$dir"; exec opencode "$@"; }
+cmd_run() {
+  local profile="${1:-}" dir;
+  shift || true;
+
+  require_opencode
+
+  dir="$(require_profile_path "$profile")";
+  export OPENCODE_CONFIG_DIR="$dir";
+  exec opencode "$@";
+}
+
 cmd_exec() { local profile="${1:-}" dir; shift || true; [[ "${1:-}" == "--" ]] && shift; [[ $# -gt 0 ]] || fail "command is required"; dir="$(require_profile_path "$profile")"; export OPENCODE_CONFIG_DIR="$dir"; exec "$@"; }
 
 cmd_env() {
@@ -261,8 +358,10 @@ cmd_path() { require_profile_path "${1:-}"; }
 cmd_refresh() {
   ensure_state; : > "$PROFILES_DB.tmp"
   local dir profile created
-  if [[ -d "$OC_PROFILES_DIR" ]]; then
-    for dir in "$OC_PROFILES_DIR"/*; do
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
+  if [[ -d "$profiles_dir" ]]; then
+    for dir in "$profiles_dir"/*; do
       [[ -d "$dir" ]] || continue; profile="$(basename "$dir")"; created="$(now_utc)"
       printf '%s\t%s\t%s\n' "$profile" "$dir" "$created" >> "$PROFILES_DB.tmp"
       [[ -f "$(manifest_path "$dir")" ]] || write_manifest "$dir" "$profile" ""
@@ -286,9 +385,97 @@ check_profile() {
 
 cmd_doctor() {
   local profile="${1:-}"
-  echo "opencode-profile-kit"; echo "config: $CONFIG_FILE"; echo "state: $STATE_DIR"; echo "profiles: $OC_PROFILES_DIR"; echo "bin: $OC_BIN_DIR"
-  command -v opencode >/dev/null 2>&1 && echo "opencode: $(command -v opencode)" || echo "opencode: not found"
-  if [[ -n "$profile" ]]; then check_profile "$profile"; else ensure_state; echo "registered profiles: $(cmd_list | wc -l | tr -d ' ')"; fi
+  local profiles_dir
+  profiles_dir="$(resolve_profiles_dir)"
+  echo "opencode-profile-kit";
+  echo "config: $CONFIG_FILE";
+  echo "state: $STATE_DIR";
+  echo "profiles: $profiles_dir";
+  echo "bin: $OC_BIN_DIR"
+  if command -v opencode >/dev/null 2>&1; then
+    echo "opencode: $(command -v opencode)"
+  else
+    echo "[warn] opencode: not found"
+  fi
+  if [[ -n "$profile" ]]; then
+    check_profile "$profile";
+  else
+    ensure_state;
+    echo "registered profiles: $(cmd_list | wc -l | tr -d ' ')";
+  fi
+}
+
+cmd_capture() {
+  local profile="$1"
+  shift
+
+  [[ "${1:-}" == "--" ]] || {
+    echo "usage: ocp capture <profile> -- <command...>" >&2
+    exit 1
+  }
+
+  shift
+
+  [[ $# -gt 0 ]] || {
+    echo "capture command required" >&2
+    exit 1
+  }
+
+  local profile_dir
+  profile_dir="$(profile_lookup_path "$profile")"
+
+  [[ -d "$profile_dir" ]] || {
+    echo "profile not found: $profile" >&2
+    exit 1
+  }
+
+  local global_dir="$OC_GLOBAL_DIR"
+
+  [[ -d "$global_dir" ]] || mkdir -p "$global_dir"
+
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local backup_dir="$tmp/backup"
+
+  mkdir -p "$backup_dir"
+
+  echo "[ocp] backing up global config..."
+
+  rsync -a --delete \
+    "$global_dir/" \
+    "$backup_dir/"
+
+  restore_global() {
+    echo "[ocp] restoring global config..."
+
+    mkdir -p "$global_dir"
+
+    rsync -a --delete \
+      "$backup_dir/" \
+      "$global_dir/"
+  }
+
+  trap restore_global EXIT
+
+  echo "[ocp] running installer..."
+
+  "$@"
+
+  echo "[ocp] syncing changes into profile..."
+
+  rsync -a \
+    --exclude session \
+    --exclude tmp \
+    --exclude logs \
+    --exclude semantic \
+    --exclude index \
+    --exclude cache \
+    --exclude .cache \
+    "$global_dir/" \
+    "$profile_dir/"
+
+  echo "[ocp] done"
 }
 
 cmd_completion_bash() {
@@ -350,6 +537,83 @@ _${cli_name} "\$@"
 ZSHCOMP
 }
 
+cmd_rewrite_paths() {
+  local profile="${1:-}"
+  local suffix="${2:-/.config/opencode}"
+
+  ensure_profile_name "$profile"
+
+  local profile_dir
+  profile_dir="$(profile_lookup_path "$profile")"
+
+  [[ -d "$profile_dir" ]] || {
+   echo "profile not found: $profile" >&2
+   exit 1
+  }
+
+  [[ "$suffix" == /.config/opencode* ]] || {
+   echo "unsupported suffix: $suffix" >&2
+   echo "expected: /.config/opencode or /.config/opencode/..." >&2
+   exit 1
+  }
+
+  local replacement_suffix
+  replacement_suffix="$(profile_replacement_suffix "$profile")"
+
+  if [[ "$suffix" != "/.config/opencode" ]]; then
+   replacement_suffix="$replacement_suffix/${suffix#/.config/opencode/}"
+  fi
+
+  echo "[ocp] rewriting hardcoded OpenCode paths in markdown files"
+  echo "profile:     $profile"
+  echo "profile_dir: $profile_dir"
+  echo "search:      $suffix"
+  echo "replace:     $replacement_suffix"
+  echo
+
+  local files
+  files="$(
+    grep -rIl \
+      --include='*.md' \
+      --exclude-dir='.git' \
+      --exclude-dir='node_modules' \
+      --exclude-dir='.cache' \
+      --exclude-dir='cache' \
+      --exclude-dir='session' \
+      --exclude-dir='tmp' \
+      --exclude-dir='logs' \
+      --exclude-dir='semantic' \
+      --exclude-dir='index' \
+      "$suffix" \
+      "$profile_dir" || true
+  )"
+
+  [[ -n "$files" ]] || {
+    echo "[ocp] no matching markdown files"
+    return 0
+  }
+
+  echo "[ocp] files to update:"
+  echo "$files"
+  echo
+
+  local escaped_search
+  local escaped_replace
+
+  escaped_search="$(printf '%s' "$suffix" | sed 's/[&/\]/\\&/g')"
+  escaped_replace="$(printf '%s' "$replacement_suffix" | sed 's/[&/\]/\\&/g')"
+
+  echo "$files" | while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+
+    sed -i "s|$escaped_search|$escaped_replace|g" "$file"
+    echo "[updated] $file"
+  done
+
+  echo
+  echo "[ocp] done"
+}
+
 cmd_completion() {
   local shell="${1:-}" cli_name="${2:-ocp}"
   case "$shell" in bash) cmd_completion_bash "$cli_name" ;; zsh) cmd_completion_zsh "$cli_name" ;; *) fail "usage: ocp completion <bash|zsh> [command-name]" ;; esac
@@ -372,11 +636,26 @@ CONFIG
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
-    new) cmd_new "$@" ;; clone) cmd_clone "$@" ;; remove) cmd_remove "$@" ;;
-    run) cmd_run "$@" ;; exec) cmd_exec "$@" ;; env) cmd_env "$@" ;; clear) cmd_clear "$@" ;; which) cmd_which "$@" ;;
-    link) cmd_link "$@" ;; link-all) cmd_link_all "$@" ;; bin) cmd_bin "$@" ;;
-    list) cmd_list "$@" ;; path) cmd_path "$@" ;; refresh) cmd_refresh "$@" ;; doctor) cmd_doctor "$@" ;;
-    completion) cmd_completion "$@" ;; config) cmd_config "$@" ;; help|-h|--help) usage ;;
+    new) cmd_new "$@" ;;
+    clone) cmd_clone "$@" ;;
+    remove) cmd_remove "$@" ;;
+    run) cmd_run "$@" ;;
+    exec) cmd_exec "$@" ;;
+    env) cmd_env "$@" ;;
+    clear) cmd_clear "$@" ;;
+    which) cmd_which "$@" ;;
+    link) cmd_link "$@" ;;
+    link-all) cmd_link_all "$@" ;;
+    bin) cmd_bin "$@" ;;
+    capture) cmd_capture "${1:-}" "${@:2}" ;;
+    rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
+    list) cmd_list "$@" ;;
+    path) cmd_path "$@" ;;
+    refresh) cmd_refresh "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    completion) cmd_completion "$@" ;;
+    config) cmd_config "$@" ;;
+    help|-h|--help) usage ;;
     *) fail "unknown command: $cmd" ;;
   esac
 }
