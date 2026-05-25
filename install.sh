@@ -1,26 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/flyinghail/opencode-profile-kit.git}"
-INSTALL_DIR="${INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode-profile-kit}"
+REPO_RAW_URL="${REPO_RAW_URL:-https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$XDG_DATA_HOME/opencode-profile-kit/bin}"
 CLI_NAME="${CLI_NAME:-ocp}"
 
-mkdir -p "$BIN_DIR"
-mkdir -p "$(dirname "$INSTALL_DIR")"
+download_file() {
+  local url="$1"
+  local output="$2"
 
-if [[ -d "$INSTALL_DIR/.git" ]]; then
-  git -C "$INSTALL_DIR" pull --ff-only
-else
-  rm -rf "$INSTALL_DIR"
-  git clone "$REPO_URL" "$INSTALL_DIR"
-fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+    return
+  fi
 
-chmod +x "$INSTALL_DIR/bin/ocp"
-ln -sfn "$INSTALL_DIR/bin/ocp" "$BIN_DIR/$CLI_NAME"
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+    return
+  fi
+
+  cat >&2 <<'EOF'
+error: curl or wget is required
+
+Install one of them first:
+
+  Ubuntu/Debian:
+    sudo apt update && sudo apt install -y curl
+
+  macOS:
+    brew install curl
+
+  Arch:
+    sudo pacman -S curl
+
+  Fedora:
+    sudo dnf install curl
+EOF
+
+  exit 1
+}
+
+mkdir -p "$INSTALL_DIR" "$BIN_DIR"
+
+download_file "$REPO_RAW_URL/bin/ocp" "$INSTALL_DIR/ocp"
+
+chmod +x "$INSTALL_DIR/ocp"
+ln -sfn "$INSTALL_DIR/ocp" "$BIN_DIR/$CLI_NAME"
 
 echo "installed: $BIN_DIR/$CLI_NAME"
-echo "source:    $INSTALL_DIR/bin/ocp"
+echo "source:    $INSTALL_DIR/ocp"
 echo ""
 echo "Make sure $BIN_DIR is in PATH."
 echo "Run '$CLI_NAME completion bash $CLI_NAME' or '$CLI_NAME completion zsh $CLI_NAME' to install completion manually."
