@@ -230,7 +230,7 @@ cmd_new() {
   done
   local profiles_dir
   profiles_dir="$(resolve_profiles_dir)"
-  local dir="$profile_dir/$profile"
+  local dir="$profiles_dir/$profile"
   [[ ! -e "$dir" ]] || fail "profile path already exists: $dir"
   mkdir -p "$dir"
   if [[ -n "$template" ]]; then
@@ -255,7 +255,7 @@ cmd_clone() {
   local profiles_dir
   profiles_dir="$(resolve_profiles_dir)"
   src="$(require_profile_path "$src_profile")"
-  dst="$profile_dir/$dst_profile"
+  dst="$profiles_dir/$dst_profile"
   [[ ! -e "$dst" ]] || fail "destination already exists: $dst"
   copy_profile "$src" "$dst" "$full"
   write_manifest "$dst" "$dst_profile" "$src_profile"
