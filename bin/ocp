@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="opencode-profile-kit"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+
+CONFIG_DIR="$CONFIG_HOME/$APP_NAME"
+CONFIG_FILE="$CONFIG_DIR/config.env"
+DATA_DIR="$DATA_HOME/$APP_NAME"
+STATE_DIR="$DATA_DIR/state"
+PROFILES_DB="$STATE_DIR/profiles.tsv"
+BINS_DB="$STATE_DIR/bins.tsv"
+
+OC_GLOBAL_DIR="${OC_GLOBAL_DIR:-$HOME/.config/opencode}"
+OC_PROFILES_DIR="${OC_PROFILES_DIR:-$HOME/.opencode-profiles}"
+OC_BIN_DIR="${OC_BIN_DIR:-$HOME/.local/bin}"
+OC_RUNTIME_IGNORE_DEFAULT="session tmp logs semantic index cache .cache"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ocp new <profile> [--from <template>]       Create a profile
+  ocp clone <src> <dst> [--full]              Clone a profile
+  ocp remove <profile> [--delete-dir]         Remove a profile
+
+  ocp run <profile> [opencode args...]        Run opencode with OPENCODE_CONFIG_DIR
+  ocp exec <profile> -- <command...>          Run any command with OPENCODE_CONFIG_DIR
+
+  ocp env <profile> [bash|zsh]                Print shell env export
+  ocp clear [bash|zsh]                        Print shell env unset
+  ocp which                                   Show current profile from OPENCODE_CONFIG_DIR
+
+  ocp link <profile> <path> [--force]         Symlink global config path into profile
+  ocp link-all <path> [--force]               Symlink global config path into all profiles
+
+  ocp bin <profile> <command-name>            Create a launcher command for a profile
+
+  ocp list                                    List profiles
+  ocp path <profile>                          Print profile path
+  ocp refresh                                 Rebuild registry from profile dirs
+  ocp doctor [profile]                        Check installation/profile health
+  ocp completion <bash|zsh> [command-name]    Print shell completion
+  ocp config                                  Print resolved paths
+USAGE
+}
+
+fail() { echo "ocp: $*" >&2; exit 1; }
+ensure_state() { mkdir -p "$STATE_DIR"; touch "$PROFILES_DB" "$BINS_DB"; }
+
+ensure_profile_name() {
+  local p="${1:-}"
+  [[ -n "$p" ]] || fail "profile is required"
+  [[ "$p" =~ ^[a-zA-Z0-9._-]+$ ]] || fail "invalid profile name: $p"
+}
+
+ensure_command_name() {
+  local n="${1:-}"
+  [[ -n "$n" ]] || fail "command name is required"
+  [[ "$n" =~ ^[a-zA-Z0-9._-]+$ ]] || fail "invalid command name: $n"
+}
+
+manifest_path() { echo "$1/.ocp-profile.json"; }
+
+write_manifest() {
+  local dir="$1" name="$2" template="${3:-}" created_at
+  created_at="$(now_utc)"
+  cat > "$(manifest_path "$dir")" <<JSON
+{
+  "name": "$name",
+  "created_at": "$created_at",
+  "template": "$template",
+  "runtime_ignore": ["session", "tmp", "logs", "semantic", "index", "cache", ".cache"]
+}
+JSON
+}
+
+register_profile() {
+  local profile="$1" dir="$2" created_at="${3:-$(now_utc)}"
+  ensure_state
+  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$PROFILES_DB.tmp" || true
+  printf '%s\t%s\t%s\n' "$profile" "$dir" "$created_at" >> "$PROFILES_DB.tmp"
+  mv "$PROFILES_DB.tmp" "$PROFILES_DB"
+}
+
+unregister_profile() {
+  local profile="$1"
+  ensure_state
+  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$PROFILES_DB.tmp" || true
+  mv "$PROFILES_DB.tmp" "$PROFILES_DB"
+}
+
+profile_lookup_path() {
+  local profile="$1" path fallback
+  ensure_state
+  path="$(awk -F '\t' -v p="$profile" '$1 == p {print $2; found=1; exit} END {if (!found) exit 1}' "$PROFILES_DB" 2>/dev/null || true)"
+  [[ -n "$path" ]] && { echo "$path"; return 0; }
+  fallback="$OC_PROFILES_DIR/$profile"
+  [[ -d "$fallback" ]] && echo "$fallback"
+}
+
+require_profile_path() {
+  local profile="$1" dir
+  ensure_profile_name "$profile"
+  dir="$(profile_lookup_path "$profile")"
+  [[ -n "$dir" && -d "$dir" ]] || fail "profile does not exist: $profile"
+  echo "$dir"
+}
+
+copy_profile() {
+  local src="$1" dst="$2" full="$3"
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    if [[ "$full" == "1" ]]; then
+      rsync -a "$src/" "$dst/"
+    else
+      rsync -a --exclude session --exclude tmp --exclude logs --exclude semantic --exclude index --exclude cache --exclude .cache "$src/" "$dst/"
+    fi
+  else
+    (cd "$src" && tar cf - .) | (cd "$dst" && tar xpf -)
+    if [[ "$full" != "1" ]]; then
+      rm -rf "$dst/session" "$dst/tmp" "$dst/logs" "$dst/semantic" "$dst/index" "$dst/cache" "$dst/.cache"
+    fi
+  fi
+}
+
+cmd_new() {
+  local profile="${1:-}" template=""
+  shift || true
+  ensure_profile_name "$profile"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from) template="${2:-}"; shift 2 ;;
+      *) fail "unknown option for new: $1" ;;
+    esac
+  done
+  local dir="$OC_PROFILES_DIR/$profile"
+  [[ ! -e "$dir" ]] || fail "profile path already exists: $dir"
+  mkdir -p "$dir"
+  if [[ -n "$template" ]]; then
+    copy_profile "$(require_profile_path "$template")" "$dir" 0
+  fi
+  write_manifest "$dir" "$profile" "$template"
+  register_profile "$profile" "$dir"
+  echo "created: $profile -> $dir"
+}
+
+cmd_clone() {
+  local src_profile="${1:-}" dst_profile="${2:-}" full=0
+  shift 2 || true
+  ensure_profile_name "$src_profile"; ensure_profile_name "$dst_profile"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --full) full=1; shift ;;
+      *) fail "unknown option for clone: $1" ;;
+    esac
+  done
+  local src dst
+  src="$(require_profile_path "$src_profile")"
+  dst="$OC_PROFILES_DIR/$dst_profile"
+  [[ ! -e "$dst" ]] || fail "destination already exists: $dst"
+  copy_profile "$src" "$dst" "$full"
+  write_manifest "$dst" "$dst_profile" "$src_profile"
+  register_profile "$dst_profile" "$dst"
+  echo "cloned: $src_profile -> $dst_profile"
+}
+
+cmd_remove() {
+  local profile="${1:-}" delete_dir=0 dir
+  shift || true
+  ensure_profile_name "$profile"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --delete-dir) delete_dir=1; shift ;;
+      *) fail "unknown option for remove: $1" ;;
+    esac
+  done
+  dir="$(profile_lookup_path "$profile")"
+  unregister_profile "$profile"
+  if [[ "$delete_dir" == "1" && -n "$dir" ]]; then rm -rf "$dir"; echo "removed: $profile and deleted $dir"; else echo "removed from registry: $profile"; fi
+}
+
+cmd_run() { local profile="${1:-}" dir; shift || true; dir="$(require_profile_path "$profile")"; export OPENCODE_CONFIG_DIR="$dir"; exec opencode "$@"; }
+cmd_exec() { local profile="${1:-}" dir; shift || true; [[ "${1:-}" == "--" ]] && shift; [[ $# -gt 0 ]] || fail "command is required"; dir="$(require_profile_path "$profile")"; export OPENCODE_CONFIG_DIR="$dir"; exec "$@"; }
+
+cmd_env() {
+  local profile="${1:-}" shell="${2:-bash}" dir
+  dir="$(require_profile_path "$profile")"
+  case "$shell" in bash|zsh|sh) printf 'export OPENCODE_CONFIG_DIR=%q\n' "$dir" ;; *) fail "unsupported shell: $shell" ;; esac
+}
+cmd_clear() { case "${1:-bash}" in bash|zsh|sh) echo 'unset OPENCODE_CONFIG_DIR' ;; *) fail "unsupported shell: ${1:-}" ;; esac; }
+
+cmd_which() {
+  local current="${OPENCODE_CONFIG_DIR:-}" name
+  [[ -n "$current" ]] || fail "OPENCODE_CONFIG_DIR is not set"
+  ensure_state
+  name="$(awk -F '\t' -v d="$current" '$2 == d {print $1; found=1; exit} END {if (!found) exit 1}' "$PROFILES_DB" 2>/dev/null || true)"
+  [[ -n "$name" ]] && echo "$name" || echo "$current"
+}
+
+link_one() {
+  local profile="$1" rel="$2" force="$3" dir src dst
+  dir="$(require_profile_path "$profile")"; src="$OC_GLOBAL_DIR/$rel"; dst="$dir/$rel"
+  [[ -e "$src" || -L "$src" ]] || fail "source does not exist: $src"
+  mkdir -p "$(dirname "$dst")"
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    [[ "$force" == "1" ]] || fail "destination exists: $dst; use --force"
+    rm -rf "$dst"
+  fi
+  ln -s "$src" "$dst"
+  echo "linked: $dst -> $src"
+}
+
+cmd_link() {
+  local profile="${1:-}" rel="${2:-}" force=0
+  shift 2 || true; ensure_profile_name "$profile"; [[ -n "$rel" ]] || fail "path is required"
+  while [[ $# -gt 0 ]]; do case "$1" in --force) force=1; shift ;; *) fail "unknown option for link: $1" ;; esac; done
+  link_one "$profile" "$rel" "$force"
+}
+
+cmd_link_all() {
+  local rel="${1:-}" force=0 profile
+  shift || true; [[ -n "$rel" ]] || fail "path is required"
+  while [[ $# -gt 0 ]]; do case "$1" in --force) force=1; shift ;; *) fail "unknown option for link-all: $1" ;; esac; done
+  while IFS= read -r profile; do link_one "$profile" "$rel" "$force"; done < <(cmd_list)
+}
+
+register_bin() {
+  local name="$1" profile="$2" path="$3"
+  ensure_state
+  awk -F '\t' -v n="$name" '$1 != n' "$BINS_DB" > "$BINS_DB.tmp" || true
+  printf '%s\t%s\t%s\n' "$name" "$profile" "$path" >> "$BINS_DB.tmp"
+  mv "$BINS_DB.tmp" "$BINS_DB"
+}
+
+cmd_bin() {
+  local profile="${1:-}" name="${2:-}" dir launcher self
+  ensure_profile_name "$profile"; ensure_command_name "$name"; dir="$(require_profile_path "$profile")"
+  mkdir -p "$OC_BIN_DIR"; launcher="$OC_BIN_DIR/$name"; self="$(command -v "$0" 2>/dev/null || true)"; [[ -n "$self" && -x "$self" ]] || self="$0"
+  cat > "$launcher" <<BIN
+#!/usr/bin/env bash
+exec "$self" run "$profile" "\$@"
+BIN
+  chmod +x "$launcher"; register_bin "$name" "$profile" "$launcher"
+  echo "created: $launcher -> $profile ($dir)"
+}
+
+cmd_list() {
+  ensure_state
+  awk -F '\t' 'NF >= 2 {print $1 "\t" $2}' "$PROFILES_DB" | while IFS=$'\t' read -r p d; do [[ -d "$d" ]] && echo "$p"; done
+}
+cmd_path() { require_profile_path "${1:-}"; }
+
+cmd_refresh() {
+  ensure_state; : > "$PROFILES_DB.tmp"
+  local dir profile created
+  if [[ -d "$OC_PROFILES_DIR" ]]; then
+    for dir in "$OC_PROFILES_DIR"/*; do
+      [[ -d "$dir" ]] || continue; profile="$(basename "$dir")"; created="$(now_utc)"
+      printf '%s\t%s\t%s\n' "$profile" "$dir" "$created" >> "$PROFILES_DB.tmp"
+      [[ -f "$(manifest_path "$dir")" ]] || write_manifest "$dir" "$profile" ""
+    done
+  fi
+  mv "$PROFILES_DB.tmp" "$PROFILES_DB"; echo "refreshed: $PROFILES_DB"
+}
+
+check_profile() {
+  local profile="$1" dir broken=0 item link
+  dir="$(require_profile_path "$profile")"
+  echo "profile: $profile"; echo "path: $dir"
+  [[ -f "$(manifest_path "$dir")" ]] && echo "manifest: ok" || echo "manifest: missing"
+  while IFS= read -r -d '' link; do
+    if [[ ! -e "$link" ]]; then echo "broken symlink: $link -> $(readlink "$link")"; broken=1; fi
+  done < <(find "$dir" -xtype l -print0 2>/dev/null || true)
+  [[ "$broken" == "0" ]] && echo "symlinks: ok"
+  for item in $OC_RUNTIME_IGNORE_DEFAULT; do [[ -e "$dir/$item" ]] && echo "runtime path present: $item" || true; done
+  return 0
+}
+
+cmd_doctor() {
+  local profile="${1:-}"
+  echo "opencode-profile-kit"; echo "config: $CONFIG_FILE"; echo "state: $STATE_DIR"; echo "profiles: $OC_PROFILES_DIR"; echo "bin: $OC_BIN_DIR"
+  command -v opencode >/dev/null 2>&1 && echo "opencode: $(command -v opencode)" || echo "opencode: not found"
+  if [[ -n "$profile" ]]; then check_profile "$profile"; else ensure_state; echo "registered profiles: $(cmd_list | wc -l | tr -d ' ')"; fi
+}
+
+cmd_completion_bash() {
+  local cli_name="${1:-ocp}"
+  cat <<BASHCOMP
+_${cli_name}_completion() {
+  local cur cmd
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  cmd="\${COMP_WORDS[1]}"
+  local commands="new clone remove run exec env clear which link link-all bin list path refresh doctor completion config help"
+  case "\$COMP_CWORD" in
+    1) COMPREPLY=( \$(compgen -W "\$commands" -- "\$cur") ); return 0 ;;
+    2)
+      case "\$cmd" in
+        run|exec|env|link|bin|path|remove|doctor|clone)
+          local profiles; profiles="\$($cli_name list 2>/dev/null)"; COMPREPLY=( \$(compgen -W "\$profiles" -- "\$cur") ); return 0 ;;
+        completion) COMPREPLY=( \$(compgen -W "bash zsh" -- "\$cur") ); return 0 ;;
+      esac ;;
+    3)
+      case "\$cmd" in
+        clone) local profiles; profiles="\$($cli_name list 2>/dev/null)"; COMPREPLY=( \$(compgen -W "\$profiles" -- "\$cur") ); return 0 ;;
+      esac ;;
+  esac
+  return 0
+}
+complete -F _${cli_name}_completion $cli_name
+BASHCOMP
+}
+
+cmd_completion_zsh() {
+  local cli_name="${1:-ocp}"
+  cat <<ZSHCOMP
+#compdef $cli_name
+_${cli_name}() {
+  local -a commands profiles shells
+  commands=(
+    'new:Create a profile' 'clone:Clone a profile' 'remove:Remove a profile'
+    'run:Run opencode with a profile' 'exec:Run a command with a profile environment'
+    'env:Print shell export for a profile' 'clear:Print shell unset for OPENCODE_CONFIG_DIR'
+    'which:Show current profile' 'link:Symlink global config path into a profile'
+    'link-all:Symlink global config path into all profiles' 'bin:Create a profile launcher command'
+    'list:List profiles' 'path:Print profile path' 'refresh:Rebuild profile registry'
+    'doctor:Check installation/profile health' 'completion:Print shell completion'
+    'config:Print resolved paths' 'help:Show help'
+  )
+  profiles=("\${(@f)\$(_call_program profiles $cli_name list 2>/dev/null)}")
+  shells=(bash zsh)
+  if (( CURRENT == 2 )); then _describe 'command' commands; return; fi
+  case "\$words[2]" in
+    run|exec|env|link|bin|path|remove|doctor|clone)
+      if (( CURRENT == 3 )); then _describe 'profile' profiles; return; fi ;;
+    completion)
+      if (( CURRENT == 3 )); then _describe 'shell' shells; return; fi ;;
+  esac
+  _files
+}
+_${cli_name} "\$@"
+ZSHCOMP
+}
+
+cmd_completion() {
+  local shell="${1:-}" cli_name="${2:-ocp}"
+  case "$shell" in bash) cmd_completion_bash "$cli_name" ;; zsh) cmd_completion_zsh "$cli_name" ;; *) fail "usage: ocp completion <bash|zsh> [command-name]" ;; esac
+}
+
+cmd_config() {
+  cat <<CONFIG
+CONFIG_DIR=$CONFIG_DIR
+CONFIG_FILE=$CONFIG_FILE
+DATA_DIR=$DATA_DIR
+STATE_DIR=$STATE_DIR
+PROFILES_DB=$PROFILES_DB
+BINS_DB=$BINS_DB
+OC_GLOBAL_DIR=$OC_GLOBAL_DIR
+OC_PROFILES_DIR=$OC_PROFILES_DIR
+OC_BIN_DIR=$OC_BIN_DIR
+CONFIG
+}
+
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    new) cmd_new "$@" ;; clone) cmd_clone "$@" ;; remove) cmd_remove "$@" ;;
+    run) cmd_run "$@" ;; exec) cmd_exec "$@" ;; env) cmd_env "$@" ;; clear) cmd_clear "$@" ;; which) cmd_which "$@" ;;
+    link) cmd_link "$@" ;; link-all) cmd_link_all "$@" ;; bin) cmd_bin "$@" ;;
+    list) cmd_list "$@" ;; path) cmd_path "$@" ;; refresh) cmd_refresh "$@" ;; doctor) cmd_doctor "$@" ;;
+    completion) cmd_completion "$@" ;; config) cmd_config "$@" ;; help|-h|--help) usage ;;
+    *) fail "unknown command: $cmd" ;;
+  esac
+}
+main "$@"
