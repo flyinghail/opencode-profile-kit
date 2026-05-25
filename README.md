@@ -27,8 +27,8 @@ This tool is for people who want OpenCode profile management to be boring, local
 
 ## Table of Contents
 
-- [Layout](#layout)
 - [Install](#install)
+- [Layout](#layout)
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Basic Usage](#basic-usage)

@@ -155,7 +155,9 @@ ensure_command_name() {
 manifest_path() { echo "$1/.ocp-profile.json"; }
 
 write_manifest() {
-  local dir="$1" name="$2" template="${3:-}" created_at
+  local dir="$1" name="$2" template="${3:-}" manifest created_at
+  manifest="$(manifest_path "$dir")"
+  [[ -f "$manifest" ]] && return 0
   created_at="$(now_utc)"
   cat > "$(manifest_path "$dir")" <<JSON
 {
@@ -167,19 +169,65 @@ write_manifest() {
 JSON
 }
 
-register_profile() {
-  local profile="$1" dir="$2" created_at="${3:-$(now_utc)}"
+with_state_lock() {
   ensure_state
-  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$PROFILES_DB.tmp" || true
-  printf '%s\t%s\t%s\n' "$profile" "$dir" "$created_at" >> "$PROFILES_DB.tmp"
-  mv "$PROFILES_DB.tmp" "$PROFILES_DB"
+
+  local lock_dir="$STATE_DIR/.lock"
+  local waited=0
+
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    waited=$((waited + 1))
+
+    if (( waited >= 100 )); then
+      echo "error: timed out waiting for state lock: $lock_dir" >&2
+      exit 1
+    fi
+
+    sleep 0.1
+  done
+
+  local status=0
+  "$@" || status=$?
+
+  rmdir "$lock_dir"
+  return "$status"
+}
+
+_register_profile_locked() {
+  local profile="$1"
+  local dir="$2"
+  local created_at="${3:-}"
+
+  if [[ -z "$created_at" && -f "$PROFILES_DB" ]]; then
+    created_at="$(awk -F '\t' -v p="$profile" '$1 == p { print $3; exit }' "$PROFILES_DB")"
+  fi
+
+  [[ -n "$created_at" ]] || created_at="$(now_utc)"
+
+  local tmp
+  tmp="$(mktemp "${PROFILES_DB}.tmp.XXXXXX")"
+
+  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$tmp" || true
+  printf '%s\t%s\t%s\n' "$profile" "$dir" "$created_at" >> "$tmp"
+  mv "$tmp" "$PROFILES_DB"
+}
+
+register_profile() {
+  with_state_lock _register_profile_locked "$@"
+}
+
+_unregister_profile_locked() {
+  local profile="$1"
+
+  local tmp
+  tmp="$(mktemp "${PROFILES_DB}.tmp.XXXXXX")"
+
+  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$tmp" || true
+  mv "$tmp" "$PROFILES_DB"
 }
 
 unregister_profile() {
-  local profile="$1"
-  ensure_state
-  awk -F '\t' -v p="$profile" '$1 != p' "$PROFILES_DB" > "$PROFILES_DB.tmp" || true
-  mv "$PROFILES_DB.tmp" "$PROFILES_DB"
+  with_state_lock _unregister_profile_locked "$@"
 }
 
 profile_lookup_path() {
@@ -230,15 +278,26 @@ cmd_new() {
   done
   local profiles_dir
   profiles_dir="$(resolve_profiles_dir)"
-  local dir="$profiles_dir/$profile"
-  [[ ! -e "$dir" ]] || fail "profile path already exists: $dir"
-  mkdir -p "$dir"
-  if [[ -n "$template" ]]; then
-    copy_profile "$(require_profile_path "$template")" "$dir" 0
+  local profile_dir="$profiles_dir/$profile"
+
+  if [[ -e "$profile_dir" && ! -d "$profile_dir" ]]; then
+    echo "path exists and is not a directory: $profile_dir" >&2
+    exit 1
   fi
-  write_manifest "$dir" "$profile" "$template"
-  register_profile "$profile" "$dir"
-  echo "created: $profile -> $dir"
+
+  if [[ ! -d "$profile_dir" ]]; then
+    mkdir -p "$profile_dir"
+    echo "created profile directory: $profile_dir"
+  else
+    echo "profile directory already exists: $profile_dir"
+  fi
+
+  if [[ -n "$template" ]]; then
+    copy_profile "$(require_profile_path "$template")" "$profile_dir" 0
+  fi
+  write_manifest "$profile_dir" "$profile" "$template"
+  register_profile "$profile" "$profile_dir"
+  echo "created: $profile -> $profile_dir"
 }
 
 cmd_clone() {
