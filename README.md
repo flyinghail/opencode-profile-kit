@@ -30,6 +30,7 @@ This tool is for people who want OpenCode profile management to be boring, local
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Basic usage](#basic-usage)
+- [Tool Compatibility](#tool-compatibility)
 - [Clone](#clone)
 - [Shared config links](#shared-config-links)
 - [Profile launcher commands](#profile-launcher-commands)
@@ -138,23 +139,17 @@ Pass arguments to OpenCode:
 ocp run omo --port 0
 ```
 
-Run any command with the profile environment:
-
+To install something into a specific profile
 ```bash
-ocp exec omo -- env | grep OPENCODE_CONFIG_DIR
-ocp exec omo -- zsh
+ocp exec omo -- npx <package> install
 ```
 
-Export the profile into the current shell:
+Or export the profile into the current shell:
 
 ```bash
 eval "$(ocp env omo)"
-```
-
-Clear it:
-
-```bash
-eval "$(ocp clear)"
+ocp exec omo -- npx <package> install
+eval "$(ocp clear)" # clear OPENCODE_CONFIG_DIR
 ```
 
 For convenience, you can define shell functions in `~/.bashrc` or `~/.zshrc`:
@@ -169,18 +164,48 @@ ocr() {
 }
 ```
 
-Then use:
+Then use it like:
 
 ```bash
 ocd omo
-... <install something>
+ocp exec omo -- npx <package> install
 ocr
 ```
 
-Show the current profile from `OPENCODE_CONFIG_DIR`:
+Notice:
+
+This uses `eval` because a child process cannot modify the environment of its parent shell.
+
+**Only run this with a trusted local `ocp` installation.** If you prefer not to use `eval`, use `ocp exec` instead.
+
+## Tool Compatibility
+
+Most OpenCode ecosystem tools respect `OPENCODE_CONFIG_DIR`, but not all tools currently support it correctly.
+
+Some tools may still:
+
+- write into `~/.config/opencode`
+- ignore the environment variable
+- partially support profile isolation
+- hardcode global paths internally
+
+In those cases, you may need to:
+
+- manually move files into the profile
+- create symlinks with `ocp link`
+- patch tool configuration
+- override paths through additional environment variables
+
+You can inspect the active profile path with:
 
 ```bash
 ocp which
+```
+
+or:
+
+```bash
+echo "$OPENCODE_CONFIG_DIR"
 ```
 
 ## Clone
