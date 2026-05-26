@@ -472,7 +472,7 @@ preflight_bins_for_profile_rename() {
   while IFS=$'\t' read -r name row_profile path; do
     [[ "$row_profile" == "$profile" ]] || continue
     if [[ -e "$path" || -L "$path" ]]; then
-      grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+      launcher_is_managed "$path" "$profile" || fail "refusing to repair unmanaged launcher: $path"
       [[ -w "$path" ]] || fail "launcher is not writable: $path"
     else
       path_parent_writable_or_creatable "$path" || fail "launcher parent is not writable or creatable: $(dirname "$path")"
@@ -481,32 +481,52 @@ preflight_bins_for_profile_rename() {
 }
 
 repair_bins_for_profile() {
-  local profile="$1" name row_profile path self
+  local profile="$1" old_profile="${2:-}" name row_profile path self
   ensure_state
   self="$(resolve_self_path)"
   while IFS=$'\t' read -r name row_profile path; do
     [[ "$row_profile" == "$profile" ]] || continue
     mkdir -p "$(dirname "$path")"
     if [[ -e "$path" || -L "$path" ]]; then
-      grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+      launcher_is_managed "$path" "$profile" || { [[ -n "$old_profile" ]] && launcher_is_managed "$path" "$old_profile"; } || fail "refusing to repair unmanaged launcher: $path"
     fi
     write_bin_launcher "$profile" "$path" "$self"
   done < "$BINS_DB"
 }
 
 warn_old_profile_paths() {
-  local dir="$1" old_dir="$2" matches
-  matches="$(grep -rIl \
-    --include='*.md' \
-    --exclude-dir='.git' \
-    --exclude-dir='session' \
-    --exclude-dir='tmp' \
-    --exclude-dir='logs' \
-    --exclude-dir='semantic' \
-    --exclude-dir='index' \
-    --exclude-dir='cache' \
-    --exclude-dir='.cache' \
-    -- "$old_dir" "$dir" 2>/dev/null || true)"
+  local dir="$1" old_dir="$2" old_suffix matches
+  old_suffix="${old_dir#"$HOME"}"
+
+  if [[ "$old_suffix" == "$old_dir" ]]; then
+    matches="$(grep -rIl \
+      --include='*.md' \
+      --exclude-dir='.git' \
+      --exclude-dir='session' \
+      --exclude-dir='tmp' \
+      --exclude-dir='logs' \
+      --exclude-dir='semantic' \
+      --exclude-dir='index' \
+      --exclude-dir='cache' \
+      --exclude-dir='.cache' \
+      -- "$old_dir" "$dir" 2>/dev/null || true)"
+  else
+    matches="$(grep -rIl \
+      --include='*.md' \
+      --exclude-dir='.git' \
+      --exclude-dir='session' \
+      --exclude-dir='tmp' \
+      --exclude-dir='logs' \
+      --exclude-dir='semantic' \
+      --exclude-dir='index' \
+      --exclude-dir='cache' \
+      --exclude-dir='.cache' \
+      -e "$old_dir" \
+      -e "~$old_suffix" \
+      -e "\$HOME$old_suffix" \
+      -e "\${HOME}$old_suffix" \
+      -- "$dir" 2>/dev/null | sort -u || true)"
+  fi
   if [[ -n "$matches" ]]; then
     echo "warning: hardcoded path references may remain after rename:"
     echo "$matches"
@@ -538,7 +558,7 @@ cmd_rename() {
     write_manifest "$new_dir" "$new" "" 1
   fi
 
-  repair_bins_for_profile "$new"
+  repair_bins_for_profile "$new" "$old"
   warn_old_profile_paths "$new_dir" "$old_dir"
   echo "renamed: $old -> $new"
 }
@@ -693,6 +713,25 @@ bin_lookup() {
   awk -F '\t' -v n="$name" '$1 == n { print $1 "\t" $2 "\t" $3; found=1; exit } END { if (!found) exit 1 }' "$BINS_DB" 2>/dev/null || true
 }
 
+launcher_is_managed() {
+  local path="$1" profile="$2"
+
+  grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null && return 0
+
+  awk -v profile="$profile" '
+    $1 == "exec" {
+      for (i = 1; i <= NF - 2; i++) {
+        candidate = $(i + 1)
+        gsub(/^"|"$/, "", candidate)
+        if ($i == "run" && candidate == profile && $(i + 2) == "\"$@\"") {
+          found = 1
+        }
+      }
+    }
+    END { exit !found }
+  ' "$path" 2>/dev/null
+}
+
 write_bin_launcher() {
   local profile="$1" launcher="$2" self="$3" self_quoted
   printf -v self_quoted '%q' "$self"
@@ -744,13 +783,14 @@ cmd_bin_list() {
 }
 
 cmd_bin_remove() {
-  local name="${1:-}" row path
+  local name="${1:-}" row profile path
   ensure_command_name "$name"
   row="$(bin_lookup "$name")"
   [[ -n "$row" ]] || fail "bin command is not registered: $name"
   path="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
   if [[ -e "$path" || -L "$path" ]]; then
-    grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to remove unmanaged launcher: $path"
+    profile="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
+    launcher_is_managed "$path" "$profile" || fail "refusing to remove unmanaged launcher: $path"
     rm -f "$path"
   fi
   unregister_bin "$name"
@@ -766,7 +806,7 @@ cmd_bin_repair_one() {
   require_profile_path "$profile" >/dev/null
   mkdir -p "$(dirname "$path")"
   if [[ -e "$path" || -L "$path" ]]; then
-    grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+    launcher_is_managed "$path" "$profile" || fail "refusing to repair unmanaged launcher: $path"
   fi
   self="$(resolve_self_path)"
   write_bin_launcher "$profile" "$path" "$self"
