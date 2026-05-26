@@ -475,11 +475,13 @@ register_bin() {
 }
 
 write_bin_launcher() {
-  local profile="$1" launcher="$2" self="$3"
+  local profile="$1" launcher="$2" self="$3" self_quoted profile_quoted
+  printf -v self_quoted '%q' "$self"
+  printf -v profile_quoted '%q' "$profile"
 
   cat > "$launcher" <<BIN
 #!/usr/bin/env bash
-exec "$self" run "$profile" "\$@"
+exec $self_quoted run $profile_quoted "\$@"
 BIN
   chmod +x "$launcher"
 }
