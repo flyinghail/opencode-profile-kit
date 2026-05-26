@@ -41,7 +41,10 @@ Usage:
   ocp link <profile> <path> [--force]         Symlink global config path into profile
   ocp link-all <path> [--force]               Symlink global config path into all profiles
 
-  ocp bin <profile> <command-name>            Create a launcher command for a profile
+  ocp bin create <profile> <command-name>     Create a launcher command for a profile
+  ocp bin list [profile]                      List launcher commands
+  ocp bin remove <command-name>               Remove a launcher command
+  ocp bin repair <command-name|--all>         Rebuild launcher command scripts
 
   ocp capture <profile> -- <command...>       Capture global installer changes into a profile
   ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
@@ -497,6 +500,24 @@ register_bin() {
   with_state_lock _register_bin_locked "$@"
 }
 
+_unregister_bin_locked() {
+  local name="$1"
+  local tmp
+  tmp="$(mktemp "${BINS_DB}.tmp.XXXXXX")"
+  awk -F '\t' -v n="$name" '$1 != n' "$BINS_DB" > "$tmp" || true
+  mv "$tmp" "$BINS_DB"
+}
+
+unregister_bin() {
+  with_state_lock _unregister_bin_locked "$@"
+}
+
+bin_lookup() {
+  local name="$1"
+  ensure_state
+  awk -F '\t' -v n="$name" '$1 == n { print $1 "\t" $2 "\t" $3; found=1; exit } END { if (!found) exit 1 }' "$BINS_DB" 2>/dev/null || true
+}
+
 write_bin_launcher() {
   local profile="$1" launcher="$2" self="$3" self_quoted profile_quoted
   printf -v self_quoted '%q' "$self"
@@ -523,16 +544,79 @@ resolve_self_path() {
   fi
 }
 
-cmd_bin() {
+cmd_bin_create() {
   local profile="${1:-}" name="${2:-}" dir launcher self
-  ensure_profile_name "$profile"; ensure_command_name "$name"; dir="$(require_profile_path "$profile")"
-  mkdir -p "$OC_BIN_DIR"; launcher="$OC_BIN_DIR/$name"; self="$(command -v "$0" 2>/dev/null || true)"; [[ -n "$self" && -x "$self" ]] || self="$0"
-  cat > "$launcher" <<BIN
-#!/usr/bin/env bash
-exec "$self" run "$profile" "\$@"
-BIN
-  chmod +x "$launcher"; register_bin "$name" "$profile" "$launcher"
+  ensure_profile_name "$profile"
+  ensure_command_name "$name"
+  dir="$(require_profile_path "$profile")"
+  mkdir -p "$OC_BIN_DIR"
+  launcher="$OC_BIN_DIR/$name"
+  self="$(resolve_self_path)"
+  write_bin_launcher "$profile" "$launcher" "$self"
+  register_bin "$name" "$profile" "$launcher"
   echo "created: $launcher -> $profile ($dir)"
+}
+
+cmd_bin_list() {
+  local filter="${1:-}"
+  ensure_state
+  awk -F '\t' -v p="$filter" 'NF >= 3 && (p == "" || $2 == p) { print $1 "\t" $2 "\t" $3 }' "$BINS_DB"
+}
+
+cmd_bin_remove() {
+  local name="${1:-}" row path
+  ensure_command_name "$name"
+  row="$(bin_lookup "$name")"
+  path="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
+  [[ -n "$path" ]] && rm -f "$path"
+  unregister_bin "$name"
+  echo "removed: $name"
+}
+
+cmd_bin_repair_one() {
+  local name="$1" row profile path self
+  row="$(bin_lookup "$name")"
+  [[ -n "$row" ]] || fail "bin command is not registered: $name"
+  profile="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
+  path="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
+  require_profile_path "$profile" >/dev/null
+  mkdir -p "$(dirname "$path")"
+  self="$(resolve_self_path)"
+  write_bin_launcher "$profile" "$path" "$self"
+  echo "repaired: $name -> $profile"
+}
+
+cmd_bin_repair() {
+  local target="${1:-}"
+  if [[ "$target" == "--all" ]]; then
+    ensure_state
+    while IFS=$'\t' read -r name _profile _path; do
+      [[ -n "$name" ]] || continue
+      cmd_bin_repair_one "$name"
+    done < "$BINS_DB"
+  else
+    ensure_command_name "$target"
+    cmd_bin_repair_one "$target"
+  fi
+}
+
+cmd_bin() {
+  local sub="${1:-}"
+  shift || true
+  case "$sub" in
+    create) cmd_bin_create "$@" ;;
+    list) cmd_bin_list "${1:-}" ;;
+    remove) cmd_bin_remove "${1:-}" ;;
+    repair) cmd_bin_repair "${1:-}" ;;
+    "") fail "usage: ocp bin create|list|remove|repair ..." ;;
+    *)
+      if [[ $# -eq 1 ]]; then
+        cmd_bin_create "$sub" "$1"
+      else
+        fail "usage: ocp bin create <profile> <command-name>"
+      fi
+      ;;
+  esac
 }
 
 cmd_list() {
