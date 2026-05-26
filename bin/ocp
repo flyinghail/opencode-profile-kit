@@ -430,6 +430,24 @@ path_parent_writable_or_creatable() {
   [[ -d "$parent" && -w "$parent" && -x "$parent" ]]
 }
 
+directory_allows_temp_file() {
+  local dir="$1" tmp
+  tmp="$(mktemp "$dir/.ocp-preflight.XXXXXX" 2>/dev/null)" || return 1
+  rm -f "$tmp"
+}
+
+preflight_manifest_for_profile_rename() {
+  local old_dir="$1" manifest
+  manifest="$(manifest_path "$old_dir")"
+
+  if [[ -f "$manifest" ]]; then
+    [[ -w "$manifest" ]] || fail "manifest is not writable: $manifest"
+    directory_allows_temp_file "$old_dir" || fail "manifest directory cannot create temporary files: $old_dir"
+  else
+    directory_allows_temp_file "$old_dir" || fail "manifest cannot be created in profile directory: $old_dir"
+  fi
+}
+
 preflight_bins_for_profile_rename() {
   local profile="$1" name row_profile path
   ensure_state
@@ -491,6 +509,7 @@ cmd_rename() {
   new_dir="$profiles_dir/$new"
   [[ ! -e "$new_dir" ]] || fail "destination already exists: $new_dir"
   preflight_bins_for_profile_rename "$old"
+  preflight_manifest_for_profile_rename "$old_dir"
 
   mv "$old_dir" "$new_dir"
   with_state_lock _rename_profile_locked "$old" "$new" "$old_dir" "$new_dir"
