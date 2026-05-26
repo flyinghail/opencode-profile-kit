@@ -388,23 +388,58 @@ _rename_profile_locked() {
 rewrite_manifest_name() {
   local manifest="$1" name="$2" tmp
   tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
-  awk -v n="$name" '
-    /"name"[[:space:]]*:/ && !done {
-      sub(/"name"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"name\": \"" n "\"")
-      done=1
-    }
-    { print }
-  ' "$manifest" > "$tmp"
-  mv "$tmp" "$manifest"
+
+  if grep -Eq '"name"[[:space:]]*:' "$manifest"; then
+    awk -v n="$name" '
+      /"name"[[:space:]]*:/ && !done {
+        sub(/"name"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"name\": \"" n "\"")
+        done=1
+      }
+      { print }
+      END { if (!done) exit 1 }
+    ' "$manifest" > "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
+  else
+    awk -v n="$name" '
+      !done && match($0, /\{/) {
+        print substr($0, 1, RSTART)
+        print "  \"name\": \"" n "\","
+        rest=substr($0, RSTART + 1)
+        if (rest != "") {
+          print rest
+        }
+        done=1
+        next
+      }
+      { print }
+      END { if (!done) exit 1 }
+    ' "$manifest" > "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
+  fi
+
+  mv "$tmp" "$manifest" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
 }
 
-ensure_bins_repairable_for_profile() {
+path_parent_writable_or_creatable() {
+  local path="$1" parent
+  parent="$(dirname "$path")"
+
+  while [[ ! -e "$parent" ]]; do
+    [[ "$parent" != "/" && "$parent" != "." ]] || break
+    parent="$(dirname "$parent")"
+  done
+
+  [[ -d "$parent" && -w "$parent" && -x "$parent" ]]
+}
+
+preflight_bins_for_profile_rename() {
   local profile="$1" name row_profile path
   ensure_state
   while IFS=$'\t' read -r name row_profile path; do
     [[ "$row_profile" == "$profile" ]] || continue
     if [[ -e "$path" || -L "$path" ]]; then
       grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+      [[ -w "$path" ]] || fail "launcher is not writable: $path"
+    else
+      path_parent_writable_or_creatable "$path" || fail "launcher parent is not writable or creatable: $(dirname "$path")"
     fi
   done < "$BINS_DB"
 }
@@ -455,7 +490,7 @@ cmd_rename() {
   profiles_dir="$(resolve_profiles_dir)"
   new_dir="$profiles_dir/$new"
   [[ ! -e "$new_dir" ]] || fail "destination already exists: $new_dir"
-  ensure_bins_repairable_for_profile "$old"
+  preflight_bins_for_profile_rename "$old"
 
   mv "$old_dir" "$new_dir"
   with_state_lock _rename_profile_locked "$old" "$new" "$old_dir" "$new_dir"
