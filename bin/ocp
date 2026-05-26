@@ -592,6 +592,9 @@ cmd_bin_repair_one() {
   path="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
   require_profile_path "$profile" >/dev/null
   mkdir -p "$(dirname "$path")"
+  if [[ -e "$path" || -L "$path" ]]; then
+    grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+  fi
   self="$(resolve_self_path)"
   write_bin_launcher "$profile" "$path" "$self"
   echo "repaired: $name -> $profile"
