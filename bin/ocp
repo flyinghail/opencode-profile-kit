@@ -407,13 +407,24 @@ cmd_exec() {
   local profile="${1:-}" dir
   shift || true
 
-  [[ "${1:-}" == "--" ]] || fail "usage: ocp exec <profile> -- <command...>"
-  shift
-  [[ $# -gt 0 ]] || fail "command is required"
-
   dir="$(require_profile_path "$profile")"
   export OPENCODE_CONFIG_DIR="$dir"
-  exec "$@"
+
+  case "${1:-}" in
+    --stdin)
+      shift
+      [[ $# -eq 0 ]] || fail "usage: ocp exec <profile> --stdin"
+      (cd "$dir" && run_stdin_script)
+      ;;
+    --)
+      shift
+      [[ $# -gt 0 ]] || fail "command is required"
+      exec "$@"
+      ;;
+    *)
+      fail "usage: ocp exec <profile> -- <command...> OR ocp exec <profile> --stdin"
+      ;;
+  esac
 }
 
 cmd_env() {
@@ -583,9 +594,21 @@ cmd_capture() {
   local profile="${1:-}"
   shift || true
 
-  [[ "${1:-}" == "--" ]] || fail "usage: ocp capture <profile> -- <command...>"
-  shift
-  [[ $# -gt 0 ]] || fail "capture command required"
+  local stdin_mode=0
+  case "${1:-}" in
+    --stdin)
+      stdin_mode=1
+      shift
+      [[ $# -eq 0 ]] || fail "usage: ocp capture <profile> --stdin"
+      ;;
+    --)
+      shift
+      [[ $# -gt 0 ]] || fail "capture command required"
+      ;;
+    *)
+      fail "usage: ocp capture <profile> -- <command...> OR ocp capture <profile> --stdin"
+      ;;
+  esac
 
   require_rsync
 
@@ -616,7 +639,11 @@ cmd_capture() {
   rsync -a --delete "$global_dir/" "$backup_dir/"
 
   echo "[ocp] running installer..."
-  "$@" || status=$?
+  if [[ "$stdin_mode" == "1" ]]; then
+    run_stdin_script || status=$?
+  else
+    "$@" || status=$?
+  fi
 
   if [[ "$status" == "0" ]]; then
     echo "[ocp] syncing changes into profile..."
