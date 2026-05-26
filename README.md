@@ -274,7 +274,11 @@ sudo dnf install rsync
 
 ## Rewriting Hardcoded Paths
 
-Some installers generate markdown files that contain hardcoded references to the global OpenCode config path.
+Some installers generate files containing hardcoded references to the global OpenCode config path.
+
+These references are commonly embedded in generated `agents/`, `skills/`, and `commands/` markdown files.
+
+Currently, `rewrite-paths` only modifies `*.md` files.
 
 These references may appear in different forms:
 
@@ -282,7 +286,7 @@ These references may appear in different forms:
 ~/.config/opencode/skills
 $HOME/.config/opencode/agents
 ${HOME}/.config/opencode/commands
-/home/user/.config/opencode/plugins
+...
 ```
 
 Use `rewrite-paths` to rewrite them into the target profile directory:

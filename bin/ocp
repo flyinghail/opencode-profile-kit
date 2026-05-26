@@ -43,6 +43,9 @@ Usage:
 
   ocp bin <profile> <command-name>            Create a launcher command for a profile
 
+  ocp capture <profile> -- <command...>       Capture global installer changes into a profile
+  ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
+
   ocp list                                    List profiles
   ocp path <profile>                          Print profile path
   ocp refresh                                 Rebuild registry from profile dirs
@@ -71,6 +74,29 @@ Install OpenCode first:
 After installation, make sure this works:
 
   opencode --help
+EOF
+    exit 1
+  fi
+}
+
+require_rsync() {
+  if ! command -v rsync >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+error: rsync is required for ocp capture
+
+Install rsync first:
+
+  Ubuntu/Debian:
+    sudo apt update && sudo apt install -y rsync
+
+  macOS:
+    brew install rsync
+
+  Arch:
+    sudo pacman -S rsync
+
+  Fedora:
+    sudo dnf install rsync
 EOF
     exit 1
   fi
@@ -105,7 +131,8 @@ expand_home_path() {
 }
 
 resolve_profiles_dir() {
-    dir="$(expand_home_path "$OC_PROFILES_DIR")"
+  local dir
+  dir="$(expand_home_path "$OC_PROFILES_DIR")"
 
   case "$dir" in
     "$HOME"/*) ;;
@@ -155,15 +182,22 @@ ensure_command_name() {
 manifest_path() { echo "$1/.ocp-profile.json"; }
 
 write_manifest() {
-  local dir="$1" name="$2" template="${3:-}" manifest created_at
+  local dir="$1" name="$2" template="${3:-}" force="${4:-0}" manifest created_at template_json
   manifest="$(manifest_path "$dir")"
-  [[ -f "$manifest" ]] && return 0
+  [[ -f "$manifest" && "$force" != "1" ]] && return 0
+
   created_at="$(now_utc)"
-  cat > "$(manifest_path "$dir")" <<JSON
+  if [[ -n "$template" ]]; then
+    template_json="\"$template\""
+  else
+    template_json="null"
+  fi
+
+  cat > "$manifest" <<JSON
 {
   "name": "$name",
   "created_at": "$created_at",
-  "template": "$template",
+  "template": $template_json,
   "runtime_ignore": ["session", "tmp", "logs", "semantic", "index", "cache", ".cache"]
 }
 JSON
@@ -270,32 +304,41 @@ cmd_new() {
   local profile="${1:-}" template=""
   shift || true
   ensure_profile_name "$profile"
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --from) template="${2:-}"; shift 2 ;;
+      --from)
+        template="${2:-}"
+        [[ -n "$template" ]] || fail "template profile is required"
+        shift 2
+        ;;
       *) fail "unknown option for new: $1" ;;
     esac
   done
-  local profiles_dir
+
+  local profiles_dir profile_dir existed=0
   profiles_dir="$(resolve_profiles_dir)"
-  local profile_dir="$profiles_dir/$profile"
+  profile_dir="$profiles_dir/$profile"
 
   if [[ -e "$profile_dir" && ! -d "$profile_dir" ]]; then
-    echo "path exists and is not a directory: $profile_dir" >&2
-    exit 1
+    fail "path exists and is not a directory: $profile_dir"
   fi
 
-  if [[ ! -d "$profile_dir" ]]; then
+  if [[ -d "$profile_dir" ]]; then
+    existed=1
+    echo "profile directory already exists: $profile_dir"
+  else
     mkdir -p "$profile_dir"
     echo "created profile directory: $profile_dir"
-  else
-    echo "profile directory already exists: $profile_dir"
   fi
 
-  if [[ -n "$template" ]]; then
+  if [[ -n "$template" && "$existed" == "0" ]]; then
     copy_profile "$(require_profile_path "$template")" "$profile_dir" 0
+  elif [[ -n "$template" && "$existed" == "1" ]]; then
+    echo "profile directory already exists; skipping template copy: $template"
   fi
-  write_manifest "$profile_dir" "$profile" "$template"
+
+  write_manifest "$profile_dir" "$profile" "$template" "$((1 - existed))"
   register_profile "$profile" "$profile_dir"
   echo "created: $profile -> $profile_dir"
 }
@@ -317,7 +360,7 @@ cmd_clone() {
   dst="$profiles_dir/$dst_profile"
   [[ ! -e "$dst" ]] || fail "destination already exists: $dst"
   copy_profile "$src" "$dst" "$full"
-  write_manifest "$dst" "$dst_profile" "$src_profile"
+  write_manifest "$dst" "$dst_profile" "$src_profile" 1
   register_profile "$dst_profile" "$dst"
   echo "cloned: $src_profile -> $dst_profile"
 }
@@ -348,13 +391,25 @@ cmd_run() {
   exec opencode "$@";
 }
 
-cmd_exec() { local profile="${1:-}" dir; shift || true; [[ "${1:-}" == "--" ]] && shift; [[ $# -gt 0 ]] || fail "command is required"; dir="$(require_profile_path "$profile")"; export OPENCODE_CONFIG_DIR="$dir"; exec "$@"; }
+cmd_exec() {
+  local profile="${1:-}" dir
+  shift || true
+
+  [[ "${1:-}" == "--" ]] || fail "usage: ocp exec <profile> -- <command...>"
+  shift
+  [[ $# -gt 0 ]] || fail "command is required"
+
+  dir="$(require_profile_path "$profile")"
+  export OPENCODE_CONFIG_DIR="$dir"
+  exec "$@"
+}
 
 cmd_env() {
   local profile="${1:-}" shell="${2:-bash}" dir
   dir="$(require_profile_path "$profile")"
   case "$shell" in bash|zsh|sh) printf 'export OPENCODE_CONFIG_DIR=%q\n' "$dir" ;; *) fail "unsupported shell: $shell" ;; esac
 }
+
 cmd_clear() { case "${1:-bash}" in bash|zsh|sh) echo 'unset OPENCODE_CONFIG_DIR' ;; *) fail "unsupported shell: ${1:-}" ;; esac; }
 
 cmd_which() {
@@ -392,12 +447,20 @@ cmd_link_all() {
   while IFS= read -r profile; do link_one "$profile" "$rel" "$force"; done < <(cmd_list)
 }
 
-register_bin() {
+_register_bin_locked() {
   local name="$1" profile="$2" path="$3"
-  ensure_state
-  awk -F '\t' -v n="$name" '$1 != n' "$BINS_DB" > "$BINS_DB.tmp" || true
-  printf '%s\t%s\t%s\n' "$name" "$profile" "$path" >> "$BINS_DB.tmp"
-  mv "$BINS_DB.tmp" "$BINS_DB"
+
+  local tmp
+  tmp="$(mktemp "${BINS_DB}.tmp.XXXXXX")"
+
+  awk -F '	' -v n="$name" '$1 != n' "$BINS_DB" > "$tmp" || true
+  printf '%s	%s	%s
+' "$name" "$profile" "$path" >> "$tmp"
+  mv "$tmp" "$BINS_DB"
+}
+
+register_bin() {
+  with_state_lock _register_bin_locked "$@"
 }
 
 cmd_bin() {
@@ -418,19 +481,29 @@ cmd_list() {
 }
 cmd_path() { require_profile_path "${1:-}"; }
 
-cmd_refresh() {
-  ensure_state; : > "$PROFILES_DB.tmp"
-  local dir profile created
-  local profiles_dir
+_refresh_locked() {
+  local tmp dir profile created profiles_dir
+  tmp="$(mktemp "${PROFILES_DB}.tmp.XXXXXX")"
   profiles_dir="$(resolve_profiles_dir)"
+
   if [[ -d "$profiles_dir" ]]; then
     for dir in "$profiles_dir"/*; do
-      [[ -d "$dir" ]] || continue; profile="$(basename "$dir")"; created="$(now_utc)"
-      printf '%s\t%s\t%s\n' "$profile" "$dir" "$created" >> "$PROFILES_DB.tmp"
+      [[ -d "$dir" ]] || continue
+      profile="$(basename "$dir")"
+      created="$(awk -F '	' -v p="$profile" '$1 == p { print $3; exit }' "$PROFILES_DB" 2>/dev/null || true)"
+      [[ -n "$created" ]] || created="$(now_utc)"
+      printf '%s	%s	%s
+' "$profile" "$dir" "$created" >> "$tmp"
       [[ -f "$(manifest_path "$dir")" ]] || write_manifest "$dir" "$profile" ""
     done
   fi
-  mv "$PROFILES_DB.tmp" "$PROFILES_DB"; echo "refreshed: $PROFILES_DB"
+
+  mv "$tmp" "$PROFILES_DB"
+}
+
+cmd_refresh() {
+  with_state_lock _refresh_locked
+  echo "refreshed: $PROFILES_DB"
 }
 
 check_profile() {
@@ -469,77 +542,58 @@ cmd_doctor() {
 }
 
 cmd_capture() {
-  local profile="$1"
+  local profile="${1:-}"
+  shift || true
+
+  [[ "${1:-}" == "--" ]] || fail "usage: ocp capture <profile> -- <command...>"
   shift
+  [[ $# -gt 0 ]] || fail "capture command required"
 
-  [[ "${1:-}" == "--" ]] || {
-    echo "usage: ocp capture <profile> -- <command...>" >&2
-    exit 1
-  }
-
-  shift
-
-  [[ $# -gt 0 ]] || {
-    echo "capture command required" >&2
-    exit 1
-  }
+  require_rsync
 
   local profile_dir
-  profile_dir="$(profile_lookup_path "$profile")"
-
-  [[ -d "$profile_dir" ]] || {
-    echo "profile not found: $profile" >&2
-    exit 1
-  }
+  profile_dir="$(require_profile_path "$profile")"
 
   local global_dir="$OC_GLOBAL_DIR"
+  mkdir -p "$global_dir"
 
-  [[ -d "$global_dir" ]] || mkdir -p "$global_dir"
-
-  local tmp
+  local tmp backup_dir restored=0 status=0
   tmp="$(mktemp -d)"
-
-  local backup_dir="$tmp/backup"
-
+  backup_dir="$tmp/backup"
   mkdir -p "$backup_dir"
 
-  echo "[ocp] backing up global config..."
-
-  rsync -a --delete \
-    "$global_dir/" \
-    "$backup_dir/"
-
   restore_global() {
-    echo "[ocp] restoring global config..."
-
-    mkdir -p "$global_dir"
-
-    rsync -a --delete \
-      "$backup_dir/" \
-      "$global_dir/"
+    if [[ "$restored" == "0" ]]; then
+      echo "[ocp] restoring global config..."
+      mkdir -p "$global_dir"
+      rsync -a --delete "$backup_dir/" "$global_dir/"
+      restored=1
+    fi
+    rm -rf "$tmp"
   }
 
-  trap restore_global EXIT
+  trap restore_global EXIT INT TERM
+
+  echo "[ocp] backing up global config..."
+  rsync -a --delete "$global_dir/" "$backup_dir/"
 
   echo "[ocp] running installer..."
+  "$@" || status=$?
 
-  "$@"
+  if [[ "$status" == "0" ]]; then
+    echo "[ocp] syncing changes into profile..."
+    rsync -a       --exclude session       --exclude tmp       --exclude logs       --exclude semantic       --exclude index       --exclude cache       --exclude .cache       "$global_dir/"       "$profile_dir/"
+  else
+    echo "[ocp] installer failed with exit code: $status" >&2
+  fi
 
-  echo "[ocp] syncing changes into profile..."
+  restore_global
+  trap - EXIT INT TERM
 
-  rsync -a \
-    --exclude session \
-    --exclude tmp \
-    --exclude logs \
-    --exclude semantic \
-    --exclude index \
-    --exclude cache \
-    --exclude .cache \
-    "$global_dir/" \
-    "$profile_dir/"
-
+  [[ "$status" == "0" ]] || exit "$status"
   echo "[ocp] done"
 }
+
 
 detect_shell() {
   local shell_name
@@ -553,62 +607,266 @@ detect_shell() {
 
 cmd_completion_bash() {
   local cli_name="${1:-ocp}"
-  cat <<BASHCOMP
-_${cli_name}_completion() {
-  local cur cmd
+
+  cat <<'BASHCOMP' | sed "s/__CLI__/$cli_name/g"
+___CLI___completion() {
+  local cur prev cmd
   COMPREPLY=()
-  cur="\${COMP_WORDS[COMP_CWORD]}"
-  cmd="\${COMP_WORDS[1]}"
-  local commands="new clone remove run exec env clear which link link-all bin list path refresh doctor completion config help"
-  case "\$COMP_CWORD" in
-    1) COMPREPLY=( \$(compgen -W "\$commands" -- "\$cur") ); return 0 ;;
+
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  cmd="${COMP_WORDS[1]}"
+
+  local commands="new clone remove run exec env clear which link link-all bin capture rewrite-paths list path refresh doctor completion config help"
+
+  case "$COMP_CWORD" in
+    1)
+      COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+      return 0
+      ;;
     2)
-      case "\$cmd" in
-        run|exec|env|link|bin|path|remove|doctor|clone)
-          local profiles; profiles="\$($cli_name list 2>/dev/null)"; COMPREPLY=( \$(compgen -W "\$profiles" -- "\$cur") ); return 0 ;;
-        completion) COMPREPLY=( \$(compgen -W "bash zsh" -- "\$cur") ); return 0 ;;
-      esac ;;
+      case "$cmd" in
+        run|exec|env|link|bin|capture|rewrite-paths|path|remove|doctor|clone)
+          local profiles
+          profiles="$(__CLI__ list 2>/dev/null)"
+          COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+          return 0
+          ;;
+        completion)
+          COMPREPLY=( $(compgen -W "bash zsh --install" -- "$cur") )
+          return 0
+          ;;
+        link-all)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
     3)
-      case "\$cmd" in
-        clone) local profiles; profiles="\$($cli_name list 2>/dev/null)"; COMPREPLY=( \$(compgen -W "\$profiles" -- "\$cur") ); return 0 ;;
-      esac ;;
+      case "$cmd" in
+        new)
+          COMPREPLY=( $(compgen -W "--from" -- "$cur") )
+          return 0
+          ;;
+        clone)
+          COMPREPLY=( $(compgen -W "--full" -- "$cur") )
+          return 0
+          ;;
+        remove)
+          COMPREPLY=( $(compgen -W "--delete-dir" -- "$cur") )
+          return 0
+          ;;
+        link|link-all)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        completion)
+          COMPREPLY=( $(compgen -W "--install" -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
+    4)
+      case "$cmd" in
+        new)
+          if [[ "$prev" == "--from" ]]; then
+            local profiles
+            profiles="$(__CLI__ list 2>/dev/null)"
+            COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+            return 0
+          fi
+          ;;
+        link)
+          COMPREPLY=( $(compgen -W "--force" -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
+    5)
+      case "$cmd" in
+        link)
+          COMPREPLY=( $(compgen -W "--force" -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
   esac
+
   return 0
 }
-complete -F _${cli_name}_completion $cli_name
+
+complete -F ___CLI___completion __CLI__
 BASHCOMP
 }
 
 cmd_completion_zsh() {
   local cli_name="${1:-ocp}"
-  cat <<ZSHCOMP
-#compdef $cli_name
-_${cli_name}() {
+
+  cat <<'ZSHCOMP' | sed "s/__CLI__/$cli_name/g"
+#compdef __CLI__
+
+___CLI__() {
   local -a commands profiles shells
+
   commands=(
-    'new:Create a profile' 'clone:Clone a profile' 'remove:Remove a profile'
-    'run:Run opencode with a profile' 'exec:Run a command with a profile environment'
-    'env:Print shell export for a profile' 'clear:Print shell unset for OPENCODE_CONFIG_DIR'
-    'which:Show current profile' 'link:Symlink global config path into a profile'
-    'link-all:Symlink global config path into all profiles' 'bin:Create a profile launcher command'
-    'list:List profiles' 'path:Print profile path' 'refresh:Rebuild profile registry'
-    'doctor:Check installation/profile health' 'completion:Print shell completion'
-    'config:Print resolved paths' 'help:Show help'
+    'new:Create a profile'
+    'clone:Clone a profile'
+    'remove:Remove a profile'
+    'run:Run opencode with a profile'
+    'exec:Run a command with a profile environment'
+    'env:Print shell export for a profile'
+    'clear:Print shell unset for OPENCODE_CONFIG_DIR'
+    'which:Show current profile'
+    'link:Symlink global config path into a profile'
+    'link-all:Symlink global config path into all profiles'
+    'bin:Create a profile launcher command'
+    'capture:Capture changes from a global-path installer'
+    'rewrite-paths:Rewrite hardcoded OpenCode paths in markdown files'
+    'list:List profiles'
+    'path:Print profile path'
+    'refresh:Rebuild profile registry'
+    'doctor:Check installation/profile health'
+    'completion:Print or install shell completion'
+    'config:Print resolved paths'
+    'help:Show help'
   )
-  profiles=("\${(@f)\$(_call_program profiles $cli_name list 2>/dev/null)}")
+
+  profiles=("${(@f)$(_call_program profiles __CLI__ list 2>/dev/null)}")
   shells=(bash zsh)
-  if (( CURRENT == 2 )); then _describe 'command' commands; return; fi
-  case "\$words[2]" in
-    run|exec|env|link|bin|path|remove|doctor|clone)
-      if (( CURRENT == 3 )); then _describe 'profile' profiles; return; fi ;;
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+
+  case "$words[2]" in
+    run|exec|env|link|bin|capture|rewrite-paths|path|remove|doctor)
+      if (( CURRENT == 3 )); then
+        _describe 'profile' profiles
+        return
+      fi
+      ;;
+    clone)
+      if (( CURRENT == 3 )); then
+        _describe 'source profile' profiles
+        return
+      elif (( CURRENT == 5 )); then
+        _values 'clone option' '--full'
+        return
+      fi
+      ;;
+    new)
+      if (( CURRENT == 4 && "$words[3]" == "--from" )); then
+        _describe 'template profile' profiles
+        return
+      fi
+      _values 'new option' '--from'
+      return
+      ;;
+    remove)
+      if (( CURRENT == 4 )); then
+        _values 'remove option' '--delete-dir'
+        return
+      fi
+      ;;
+    link)
+      if (( CURRENT == 5 )); then
+        _values 'link option' '--force'
+        return
+      fi
+      _files
+      return
+      ;;
+    link-all)
+      if (( CURRENT == 3 )); then
+        _files
+        return
+      elif (( CURRENT == 4 )); then
+        _values 'link-all option' '--force'
+        return
+      fi
+      ;;
     completion)
-      if (( CURRENT == 3 )); then _describe 'shell' shells; return; fi ;;
+      if (( CURRENT == 3 )); then
+        _describe 'shell' shells
+        _values 'completion option' '--install'
+        return
+      elif (( CURRENT == 4 )); then
+        _values 'completion option' '--install'
+        return
+      fi
+      ;;
   esac
+
   _files
 }
-_${cli_name} "\$@"
+
+___CLI__ "$@"
 ZSHCOMP
 }
+
+cmd_completion() {
+  local shell=""
+  local install=0
+
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      bash|zsh)
+        shell="$1"
+        shift
+        ;;
+      --install)
+        shell="$(detect_shell)"
+        ;;
+      *)
+        echo "unknown completion shell: $1" >&2
+        echo "usage: $(basename "$0") completion [bash|zsh] [--install]" >&2
+        exit 1
+        ;;
+    esac
+  else
+    shell="$(detect_shell)"
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --install)
+        install=1
+        shift
+        ;;
+      *)
+        echo "unknown completion option: $1" >&2
+        echo "usage: $(basename "$0") completion [bash|zsh] [--install]" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  local cli_name
+  cli_name="$(current_cli_name)"
+
+  case "$shell" in
+    bash)
+      if [[ "$install" == "1" ]]; then
+        install_bash_completion "$cli_name"
+      else
+        cmd_completion_bash "$cli_name"
+      fi
+      ;;
+    zsh)
+      if [[ "$install" == "1" ]]; then
+        install_zsh_completion "$cli_name"
+      else
+        cmd_completion_zsh "$cli_name"
+      fi
+      ;;
+    *)
+      echo "usage: $cli_name completion [bash|zsh] [--install]" >&2
+      exit 1
+      ;;
+  esac
+}
+
 
 cmd_rewrite_paths() {
   local profile="${1:-}"
@@ -725,57 +983,6 @@ EOF
   echo "updated zshrc: $zshrc"
 }
 
-cmd_completion() {
-  local shell="${1:-}"
-  shift || true
-
-  if [[ "$shell" == "--install" ]]; then
-    set -- --install "$@"
-  fi
-
-  if [[ -z "$shell" || "$shell" == "--install" ]]; then
-    shell="$(detect_shell)"
-  fi
-
-  local install=0
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --install)
-        install=1
-        shift
-        ;;
-      *)
-        echo "unknown completion option: $1" >&2
-        exit 1
-        ;;
-    esac
-  done
-
-  local cli_name
-  cli_name="$(current_cli_name)"
-
-  case "$shell" in
-    bash)
-      if [[ "$install" == "1" ]]; then
-        install_bash_completion "$cli_name"
-      else
-        cmd_completion_bash "$cli_name"
-      fi
-      ;;
-    zsh)
-      if [[ "$install" == "1" ]]; then
-        install_zsh_completion "$cli_name"
-      else
-        cmd_completion_zsh "$cli_name"
-      fi
-      ;;
-    *)
-      echo "usage: $cli_name completion [bash|zsh] [--install]" >&2
-      exit 1
-      ;;
-  esac
-}
 
 cmd_config() {
   cat <<CONFIG
