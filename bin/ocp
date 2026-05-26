@@ -1011,10 +1011,6 @@ ___CLI___completion() {
           COMPREPLY=( $(compgen -W "--from" -- "$cur") )
           return 0
           ;;
-        clone)
-          COMPREPLY=( $(compgen -W "--full" -- "$cur") )
-          return 0
-          ;;
         remove)
           COMPREPLY=( $(compgen -W "--delete-dir" -- "$cur") )
           return 0
@@ -1052,6 +1048,10 @@ ___CLI___completion() {
             COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
             return 0
           fi
+          ;;
+        clone)
+          COMPREPLY=( $(compgen -W "--full" -- "$cur") )
+          return 0
           ;;
         link)
           COMPREPLY=( $(compgen -W "--force" -- "$cur") )
