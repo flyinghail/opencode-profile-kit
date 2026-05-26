@@ -373,6 +373,7 @@ cmd_clone() {
 _rename_profile_locked() {
   local old="$1" new="$2" old_dir="$3" new_dir="$4" created_at tmp
 
+  [[ ! -e "$new_dir" ]] || { echo "ocp: destination already exists: $new_dir" >&2; return 1; }
   mv "$old_dir" "$new_dir"
 
   created_at="$(awk -F '\t' -v p="$old" '$1 == p { print $3; exit }' "$PROFILES_DB" 2>/dev/null || true)"
@@ -388,9 +389,8 @@ _rename_profile_locked() {
   mv "$tmp" "$BINS_DB"
 }
 
-rewrite_manifest_name() {
-  local manifest="$1" name="$2" tmp
-  tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
+render_manifest_name() {
+  local manifest="$1" name="$2" output="$3"
 
   if grep -Eq '"name"[[:space:]]*:' "$manifest"; then
     awk -v n="$name" '
@@ -400,7 +400,7 @@ rewrite_manifest_name() {
       }
       { print }
       END { if (!done) exit 1 }
-    ' "$manifest" > "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
+    ' "$manifest" > "$output"
   else
     awk -v n="$name" '
       !done && match($0, /\{/) {
@@ -415,9 +415,15 @@ rewrite_manifest_name() {
       }
       { print }
       END { if (!done) exit 1 }
-    ' "$manifest" > "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
+    ' "$manifest" > "$output"
   fi
+}
 
+rewrite_manifest_name() {
+  local manifest="$1" name="$2" tmp
+  tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
+
+  render_manifest_name "$manifest" "$name" "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
   mv "$tmp" "$manifest" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
 }
 
@@ -440,12 +446,15 @@ directory_allows_temp_file() {
 }
 
 preflight_manifest_for_profile_rename() {
-  local old_dir="$1" manifest
+  local old_dir="$1" new="$2" manifest tmp
   manifest="$(manifest_path "$old_dir")"
 
   if [[ -f "$manifest" ]]; then
     [[ -w "$manifest" ]] || fail "manifest is not writable: $manifest"
     directory_allows_temp_file "$old_dir" || fail "manifest directory cannot create temporary files: $old_dir"
+    tmp="$(mktemp "$old_dir/.ocp-manifest-preflight.XXXXXX")" || fail "manifest directory cannot create temporary files: $old_dir"
+    render_manifest_name "$manifest" "$new" "$tmp" || { rm -f "$tmp"; fail "could not rewrite manifest: $manifest"; }
+    rm -f "$tmp"
   else
     directory_allows_temp_file "$old_dir" || fail "manifest cannot be created in profile directory: $old_dir"
   fi
@@ -512,7 +521,7 @@ cmd_rename() {
   new_dir="$profiles_dir/$new"
   [[ ! -e "$new_dir" ]] || fail "destination already exists: $new_dir"
   preflight_bins_for_profile_rename "$old"
-  preflight_manifest_for_profile_rename "$old_dir"
+  preflight_manifest_for_profile_rename "$old_dir" "$new"
 
   with_state_lock _rename_profile_locked "$old" "$new" "$old_dir" "$new_dir"
 
