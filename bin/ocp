@@ -392,13 +392,12 @@ cmd_run() {
 }
 
 run_stdin_script() {
-  local tmp_dir script shell_name status=0
+  local tmp_dir script status=0
   tmp_dir="$(mktemp -d)" || return 1
   script="$tmp_dir/stdin-script.sh"
-  shell_name="${SHELL:-/bin/sh}"
 
   cat > "$script" || { rm -rf "$tmp_dir"; return 1; }
-  "$shell_name" "$script" || status=$?
+  bash "$script" || status=$?
   rm -rf "$tmp_dir"
   return "$status"
 }
