@@ -392,13 +392,14 @@ cmd_run() {
 }
 
 run_stdin_script() {
-  local script shell_name status=0
-  script="$(mktemp)"
+  local tmp_dir script shell_name status=0
+  tmp_dir="$(mktemp -d)" || return 1
+  script="$tmp_dir/stdin-script.sh"
   shell_name="${SHELL:-/bin/sh}"
 
-  cat > "$script"
+  cat > "$script" || { rm -rf "$tmp_dir"; return 1; }
   "$shell_name" "$script" || status=$?
-  rm -f "$script"
+  rm -rf "$tmp_dir"
   return "$status"
 }
 
@@ -487,10 +488,17 @@ BIN
 }
 
 resolve_self_path() {
-  local self
+  local self dir base
   self="$(command -v "$0" 2>/dev/null || true)"
   [[ -n "$self" && -x "$self" ]] || self="$0"
-  printf '%s\n' "$self"
+
+  if [[ "$self" == */* ]]; then
+    dir="$(cd "$(dirname "$self")" && pwd -P)" || return 1
+    base="$(basename "$self")"
+    printf '%s/%s\n' "$dir" "$base"
+  else
+    command -v "$self"
+  fi
 }
 
 cmd_bin() {
