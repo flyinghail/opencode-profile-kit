@@ -1338,7 +1338,7 @@ cmd_rewrite_paths() {
 
 install_bash_completion() {
   local cli_name="$1"
-  local completions_dir="${BASH_COMPLETION_USER_DIR:-$HOME/.local/share/bash-completion/completions}"
+  local completions_dir="${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions"
 
   mkdir -p "$completions_dir"
   cmd_completion_bash "$cli_name" > "$completions_dir/$cli_name"
