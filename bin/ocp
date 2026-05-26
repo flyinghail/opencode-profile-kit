@@ -371,10 +371,13 @@ cmd_clone() {
 }
 
 _rename_profile_locked() {
-  local old="$1" new="$2" old_dir="$3" new_dir="$4" created_at tmp
+  local old="$1" new="$2" old_dir="$3" new_dir="$4" current_dir created_at tmp
 
+  [[ -d "$old_dir" ]] || { echo "ocp: profile changed during rename: $old" >&2; return 1; }
+  current_dir="$(awk -F '\t' -v p="$old" '$1 == p { print $2; exit }' "$PROFILES_DB" 2>/dev/null || true)"
+  [[ -z "$current_dir" || "$current_dir" == "$old_dir" ]] || { echo "ocp: profile changed during rename: $old" >&2; return 1; }
   [[ ! -e "$new_dir" ]] || { echo "ocp: destination already exists: $new_dir" >&2; return 1; }
-  mv "$old_dir" "$new_dir"
+  mv "$old_dir" "$new_dir" || { echo "ocp: profile changed during rename: $old" >&2; return 1; }
 
   created_at="$(awk -F '\t' -v p="$old" '$1 == p { print $3; exit }' "$PROFILES_DB" 2>/dev/null || true)"
   [[ -n "$created_at" ]] || created_at="$(now_utc)"
