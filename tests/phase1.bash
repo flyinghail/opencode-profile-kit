@@ -48,7 +48,8 @@ assert_eq "$(cat "$tmp/shell-env")" "$alpha_dir" "shell OPENCODE_CONFIG_DIR"
 "$OCP" bin create alpha oc-alpha >/dev/null
 "$OCP" bin list > "$tmp/bin-list-before"
 assert_file_contains "$tmp/bin-list-before" $'oc-alpha\talpha\t'
-"$OC_BIN_DIR/oc-alpha" --help >/dev/null 2>&1 || true
+[[ -x "$OC_BIN_DIR/oc-alpha" ]] || fail "bin create did not write an executable launcher"
+bash -n "$OC_BIN_DIR/oc-alpha"
 
 mkdir -p "$alpha_dir/agents"
 printf 'old path: %s/.config/opencode\nold profile path: %s\n' "$HOME" "$alpha_dir" > "$alpha_dir/agents/example.md"
