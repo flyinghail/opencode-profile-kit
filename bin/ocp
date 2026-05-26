@@ -567,6 +567,7 @@ cmd_bin_remove() {
   local name="${1:-}" row path
   ensure_command_name "$name"
   row="$(bin_lookup "$name")"
+  [[ -n "$row" ]] || fail "bin command is not registered: $name"
   path="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
   [[ -n "$path" ]] && rm -f "$path"
   unregister_bin "$name"
@@ -604,10 +605,22 @@ cmd_bin() {
   local sub="${1:-}"
   shift || true
   case "$sub" in
-    create) cmd_bin_create "$@" ;;
-    list) cmd_bin_list "${1:-}" ;;
-    remove) cmd_bin_remove "${1:-}" ;;
-    repair) cmd_bin_repair "${1:-}" ;;
+    create)
+      [[ $# -eq 2 ]] || fail "usage: ocp bin create <profile> <command-name>"
+      cmd_bin_create "$@"
+      ;;
+    list)
+      [[ $# -le 1 ]] || fail "usage: ocp bin list [profile]"
+      cmd_bin_list "${1:-}"
+      ;;
+    remove)
+      [[ $# -eq 1 ]] || fail "usage: ocp bin remove <command-name>"
+      cmd_bin_remove "$1"
+      ;;
+    repair)
+      [[ $# -eq 1 ]] || fail "usage: ocp bin repair <command-name|--all>"
+      cmd_bin_repair "$1"
+      ;;
     "") fail "usage: ocp bin create|list|remove|repair ..." ;;
     *)
       if [[ $# -eq 1 ]]; then
