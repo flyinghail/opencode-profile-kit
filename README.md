@@ -127,7 +127,7 @@ ocp link-all <path> [--force]
 ocp bin create <profile> <command-name>
 ocp bin list [profile]
 ocp bin remove <command-name>
-ocp bin repair [command-name|--all]
+ocp bin repair <command-name|--all>
 
 ocp capture <profile> -- <command...>
 ocp capture <profile> --stdin

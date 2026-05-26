@@ -48,7 +48,7 @@ Usage:
   ocp bin create <profile> <command-name>     Create a launcher command for a profile
   ocp bin list [profile]                      List launcher commands
   ocp bin remove <command-name>               Remove a launcher command
-  ocp bin repair [command-name|--all]         Regenerate launcher commands
+  ocp bin repair <command-name|--all>         Regenerate launcher commands
 
   ocp capture <profile> -- <command...>       Capture global installer changes into a profile
   ocp capture <profile> --stdin               Capture stdin script global config changes
