@@ -30,6 +30,7 @@ usage() {
 Usage:
   ocp new <profile> [--from <template>]       Create a profile
   ocp clone <src> <dst> [--full]              Clone a profile
+  ocp rename <old> <new>                      Rename a profile
   ocp remove <profile> [--delete-dir]         Remove a profile
 
   ocp run <profile> [opencode args...]        Run opencode with OPENCODE_CONFIG_DIR
@@ -369,6 +370,108 @@ cmd_clone() {
   echo "cloned: $src_profile -> $dst_profile"
 }
 
+_rename_profile_locked() {
+  local old="$1" new="$2" old_dir="$3" new_dir="$4" created_at tmp
+  created_at="$(awk -F '\t' -v p="$old" '$1 == p { print $3; exit }' "$PROFILES_DB" 2>/dev/null || true)"
+  [[ -n "$created_at" ]] || created_at="$(now_utc)"
+
+  tmp="$(mktemp "${PROFILES_DB}.tmp.XXXXXX")"
+  awk -F '\t' -v p="$old" '$1 != p' "$PROFILES_DB" > "$tmp" || true
+  printf '%s\t%s\t%s\n' "$new" "$new_dir" "$created_at" >> "$tmp"
+  mv "$tmp" "$PROFILES_DB"
+
+  tmp="$(mktemp "${BINS_DB}.tmp.XXXXXX")"
+  awk -F '\t' -v old="$old" -v new="$new" 'BEGIN { OFS = FS } $2 == old { $2 = new } { print }' "$BINS_DB" > "$tmp" || true
+  mv "$tmp" "$BINS_DB"
+}
+
+rewrite_manifest_name() {
+  local manifest="$1" name="$2" tmp
+  tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
+  awk -v n="$name" '
+    /"name"[[:space:]]*:/ && !done {
+      sub(/"name"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"name\": \"" n "\"")
+      done=1
+    }
+    { print }
+  ' "$manifest" > "$tmp"
+  mv "$tmp" "$manifest"
+}
+
+ensure_bins_repairable_for_profile() {
+  local profile="$1" name row_profile path
+  ensure_state
+  while IFS=$'\t' read -r name row_profile path; do
+    [[ "$row_profile" == "$profile" ]] || continue
+    if [[ -e "$path" || -L "$path" ]]; then
+      grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+    fi
+  done < "$BINS_DB"
+}
+
+repair_bins_for_profile() {
+  local profile="$1" name row_profile path self
+  ensure_state
+  self="$(resolve_self_path)"
+  while IFS=$'\t' read -r name row_profile path; do
+    [[ "$row_profile" == "$profile" ]] || continue
+    mkdir -p "$(dirname "$path")"
+    if [[ -e "$path" || -L "$path" ]]; then
+      grep -Fq "$BIN_LAUNCHER_MARKER" "$path" 2>/dev/null || fail "refusing to repair unmanaged launcher: $path"
+    fi
+    write_bin_launcher "$profile" "$path" "$self"
+  done < "$BINS_DB"
+}
+
+warn_old_profile_paths() {
+  local dir="$1" old_dir="$2" matches
+  matches="$(grep -rIl \
+    --include='*.md' \
+    --exclude-dir='.git' \
+    --exclude-dir='session' \
+    --exclude-dir='tmp' \
+    --exclude-dir='logs' \
+    --exclude-dir='semantic' \
+    --exclude-dir='index' \
+    --exclude-dir='cache' \
+    --exclude-dir='.cache' \
+    -- "$old_dir" "$dir" 2>/dev/null || true)"
+  if [[ -n "$matches" ]]; then
+    echo "warning: hardcoded path references may remain after rename:"
+    echo "$matches"
+    echo "warning: rerun installers, run rewrite-paths where appropriate, or use ocp upgrade when available"
+  fi
+}
+
+cmd_rename() {
+  local old="${1:-}" new="${2:-}" old_dir new_dir profiles_dir manifest
+  shift 2 || true
+  [[ $# -eq 0 ]] || fail "usage: ocp rename <old> <new>"
+  ensure_profile_name "$old"
+  ensure_profile_name "$new"
+  [[ "$old" != "$new" ]] || fail "new profile name must differ from old profile name"
+
+  old_dir="$(require_profile_path "$old")"
+  profiles_dir="$(resolve_profiles_dir)"
+  new_dir="$profiles_dir/$new"
+  [[ ! -e "$new_dir" ]] || fail "destination already exists: $new_dir"
+  ensure_bins_repairable_for_profile "$old"
+
+  mv "$old_dir" "$new_dir"
+  with_state_lock _rename_profile_locked "$old" "$new" "$old_dir" "$new_dir"
+
+  manifest="$(manifest_path "$new_dir")"
+  if [[ -f "$manifest" ]]; then
+    rewrite_manifest_name "$manifest" "$new"
+  else
+    write_manifest "$new_dir" "$new" "" 1
+  fi
+
+  repair_bins_for_profile "$new"
+  warn_old_profile_paths "$new_dir" "$old_dir"
+  echo "renamed: $old -> $new"
+}
+
 cmd_remove() {
   local profile="${1:-}" delete_dir=0 dir
   shift || true
@@ -520,14 +623,13 @@ bin_lookup() {
 }
 
 write_bin_launcher() {
-  local profile="$1" launcher="$2" self="$3" self_quoted profile_quoted
+  local profile="$1" launcher="$2" self="$3" self_quoted
   printf -v self_quoted '%q' "$self"
-  printf -v profile_quoted '%q' "$profile"
 
   cat > "$launcher" <<BIN
 #!/usr/bin/env bash
 $BIN_LAUNCHER_MARKER
-exec $self_quoted run $profile_quoted "\$@"
+exec $self_quoted run "$profile" "\$@"
 BIN
   chmod +x "$launcher"
 }
@@ -803,7 +905,7 @@ ___CLI___completion() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   cmd="${COMP_WORDS[1]}"
 
-  local commands="new clone remove run exec env clear which link link-all bin capture rewrite-paths list path refresh doctor completion config help"
+  local commands="new clone rename remove run exec env clear which link link-all bin capture rewrite-paths list path refresh doctor completion config help"
 
   case "$COMP_CWORD" in
     1)
@@ -812,7 +914,7 @@ ___CLI___completion() {
       ;;
     2)
       case "$cmd" in
-        run|exec|env|link|bin|capture|rewrite-paths|path|remove|doctor|clone)
+        run|exec|env|link|bin|capture|rewrite-paths|path|rename|remove|doctor|clone)
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
@@ -897,6 +999,7 @@ ___CLI__() {
   commands=(
     'new:Create a profile'
     'clone:Clone a profile'
+    'rename:Rename a profile'
     'remove:Remove a profile'
     'run:Run opencode with a profile'
     'exec:Run a command with a profile environment'
@@ -926,7 +1029,7 @@ ___CLI__() {
   fi
 
   case "$words[2]" in
-    run|exec|env|link|bin|capture|rewrite-paths|path|remove|doctor)
+    run|exec|env|link|bin|capture|rewrite-paths|path|rename|remove|doctor)
       if (( CURRENT == 3 )); then
         _describe 'profile' profiles
         return
@@ -1189,6 +1292,7 @@ main() {
   case "$cmd" in
     new) cmd_new "$@" ;;
     clone) cmd_clone "$@" ;;
+    rename) cmd_rename "$@" ;;
     remove) cmd_remove "$@" ;;
     run) cmd_run "$@" ;;
     shell) cmd_shell "$@" ;;
