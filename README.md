@@ -109,10 +109,13 @@ OC_BIN_DIR="$HOME/.local/bin"
 ```text
 ocp new <profile> [--from <template>]
 ocp clone <src> <dst> [--full]
+ocp rename <old> <new>
 ocp remove <profile> [--delete-dir]
 
 ocp run <profile> [opencode args...]
+ocp shell <profile>
 ocp exec <profile> -- <command...>
+ocp exec <profile> --stdin
 
 ocp env <profile> [bash|zsh]
 ocp clear [bash|zsh]
@@ -121,9 +124,13 @@ ocp which
 ocp link <profile> <path> [--force]
 ocp link-all <path> [--force]
 
-ocp bin <profile> <command-name>
+ocp bin create <profile> <command-name>
+ocp bin list [profile]
+ocp bin remove <command-name>
+ocp bin repair [command-name|--all]
 
 ocp capture <profile> -- <command...>
+ocp capture <profile> --stdin
 ocp rewrite-paths <profile> [path-suffix]
 
 ocp list
@@ -162,6 +169,27 @@ Run any command inside the profile environment:
 ocp exec my-profile -- env | grep OPENCODE_CONFIG_DIR
 ocp exec my-profile -- zsh
 ```
+
+### Profile shell
+
+`ocp shell <profile>` starts `${SHELL:-/bin/sh}` in the profile directory with `OPENCODE_CONFIG_DIR` set.
+
+### Multi-line scripts
+
+Use `--stdin` when an install command needs multiple shell lines:
+
+```bash
+ocp exec my-profile --stdin <<'SCRIPT'
+echo "$OPENCODE_CONFIG_DIR"
+npx some-package install
+SCRIPT
+```
+
+For installers that write to `~/.config/opencode`, use `capture --stdin` the same way.
+
+### Rename
+
+`ocp rename <old> <new>` renames the profile directory and updates registry, manifest, and registered launcher commands. It warns if markdown files still contain the old profile path.
 
 Export the profile into the current shell:
 
@@ -382,7 +410,7 @@ ocp link-all AGENTS.md --force
 Create a dedicated launcher command:
 
 ```bash
-ocp bin my-profile oc-my-profile
+ocp bin create my-profile oc-my-profile
 ```
 
 Then run:
@@ -558,4 +586,3 @@ It reports:
 - missing manifest
 - broken symlinks
 - common runtime/cache paths inside a profile
-
