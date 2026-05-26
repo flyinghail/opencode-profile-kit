@@ -391,6 +391,18 @@ cmd_run() {
   exec opencode "$@";
 }
 
+cmd_shell() {
+  local profile="${1:-}" dir shell_name
+  shift || true
+  [[ $# -eq 0 ]] || fail "usage: ocp shell <profile>"
+
+  dir="$(require_profile_path "$profile")"
+  export OPENCODE_CONFIG_DIR="$dir"
+  cd "$dir"
+  shell_name="${SHELL:-/bin/sh}"
+  exec "$shell_name"
+}
+
 run_stdin_script() {
   local tmp_dir script status=0
   tmp_dir="$(mktemp -d)" || return 1
@@ -1069,6 +1081,7 @@ main() {
     clone) cmd_clone "$@" ;;
     remove) cmd_remove "$@" ;;
     run) cmd_run "$@" ;;
+    shell) cmd_shell "$@" ;;
     exec) cmd_exec "$@" ;;
     env) cmd_env "$@" ;;
     clear) cmd_clear "$@" ;;
