@@ -391,6 +391,17 @@ cmd_run() {
   exec opencode "$@";
 }
 
+run_stdin_script() {
+  local script shell_name status=0
+  script="$(mktemp)"
+  shell_name="${SHELL:-/bin/sh}"
+
+  cat > "$script"
+  "$shell_name" "$script" || status=$?
+  rm -f "$script"
+  return "$status"
+}
+
 cmd_exec() {
   local profile="${1:-}" dir
   shift || true
@@ -461,6 +472,23 @@ _register_bin_locked() {
 
 register_bin() {
   with_state_lock _register_bin_locked "$@"
+}
+
+write_bin_launcher() {
+  local profile="$1" launcher="$2" self="$3"
+
+  cat > "$launcher" <<BIN
+#!/usr/bin/env bash
+exec "$self" run "$profile" "\$@"
+BIN
+  chmod +x "$launcher"
+}
+
+resolve_self_path() {
+  local self
+  self="$(command -v "$0" 2>/dev/null || true)"
+  [[ -n "$self" && -x "$self" ]] || self="$0"
+  printf '%s\n' "$self"
 }
 
 cmd_bin() {
