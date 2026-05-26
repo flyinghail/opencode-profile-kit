@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_RAW_URL="${REPO_RAW_URL:-https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main}"
+REPO_RAW_URL="https://raw.githubusercontent.com/flyinghail/opencode-profile-kit/main"
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 INSTALL_DIR="${INSTALL_DIR:-$XDG_DATA_HOME/opencode-profile-kit/bin}"
@@ -51,6 +51,12 @@ ln -sfn "$INSTALL_DIR/ocp" "$BIN_DIR/$CLI_NAME"
 
 echo "installed: $BIN_DIR/$CLI_NAME"
 echo "source:    $INSTALL_DIR/ocp"
-echo ""
+echo
 echo "Make sure $BIN_DIR is in PATH."
-echo "Run '$CLI_NAME completion bash --install' or '$CLI_NAME completion zsh --install' to install completion manually."
+if [[ "${INSTALL_COMPLETION:-0}" == "1" ]]; then
+  "$BIN_DIR/$CLI_NAME" completion --install
+else
+  echo "To install shell completion, run:"
+  echo "  $CLI_NAME completion --install"
+fi
+

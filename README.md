@@ -130,7 +130,7 @@ ocp list
 ocp path <profile>
 ocp refresh
 ocp doctor [profile]
-ocp completion <bash|zsh> [--install]
+ocp completion [bash|zsh] [--install]
 ocp config
 ```
 
@@ -269,31 +269,6 @@ Fedora:
 ```bash
 sudo dnf install rsync
 ```
-
----
-
-## Capturing Global Installers
-
-Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
-
-```text
-~/.config/opencode
-```
-
-For those tools, use `capture`:
-
-```bash
-ocp capture my-profile -- npx <package> install
-```
-
-`capture` will:
-
-1. backup the global OpenCode config directory
-2. run the installer
-3. copy resulting changes into the target profile
-4. restore the original global config
-
-This allows profile-isolated installation even for tools that hardcode global paths.
 
 ---
 
@@ -463,23 +438,56 @@ ocp refresh
 
 ## Completion
 
-Print completion script:
+Print completion script for the current shell:
+
+```bash
+ocp completion
+```
+
+Install completion for the current shell:
+
+```bash
+ocp completion --install
+```
+
+The shell is automatically detected from:
+
+```text
+$SHELL
+```
+
+You can also explicitly specify the shell:
 
 ```bash
 ocp completion bash
 ocp completion zsh
-```
 
-Install completion:
-
-```bash
 ocp completion bash --install
 ocp completion zsh --install
 ```
+Bash completion is installed to the standard user completion directory:
 
-The generated completion uses the current command name automatically.
+```text
+${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions/<command-name>
+```
 
-For zsh, `--install` will appending the required `fpath` / `compinit` setup to `~/.zshrc`.
+This does not modify `~/.bashrc`. It requires `bash-completion` to be installed and loaded by your shell.
+
+Zsh completion is installed under:
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/opencode-profile-kit/completions/zsh/_<command-name>
+```
+
+For zsh, `--install` appends an idempotent marked block to `~/.zshrc` with the required `fpath` / `compinit` setup.
+
+The generated completion dynamically reads profiles from:
+
+```bash
+ocp list
+```
+
+so newly created profiles do not require reinstalling completion.
 
 ---
 

@@ -47,7 +47,7 @@ Usage:
   ocp path <profile>                          Print profile path
   ocp refresh                                 Rebuild registry from profile dirs
   ocp doctor [profile]                        Check installation/profile health
-  ocp completion <bash|zsh> [--install]       Print/install shell completion
+  ocp completion [bash|zsh] [--install]       Print/install shell completion
   ocp config                                  Print resolved paths
 USAGE
 }
@@ -541,6 +541,16 @@ cmd_capture() {
   echo "[ocp] done"
 }
 
+detect_shell() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+
+  case "$shell_name" in
+    zsh) echo "zsh" ;;
+    *) echo "bash" ;;
+  esac
+}
+
 cmd_completion_bash() {
   local cli_name="${1:-ocp}"
   cat <<BASHCOMP
@@ -719,6 +729,14 @@ cmd_completion() {
   local shell="${1:-}"
   shift || true
 
+  if [[ "$shell" == "--install" ]]; then
+    set -- --install "$@"
+  fi
+
+  if [[ -z "$shell" || "$shell" == "--install" ]]; then
+    shell="$(detect_shell)"
+  fi
+
   local install=0
 
   while [[ $# -gt 0 ]]; do
@@ -753,7 +771,7 @@ cmd_completion() {
       fi
       ;;
     *)
-      echo "usage: $cli_name completion <bash|zsh> [--install]" >&2
+      echo "usage: $cli_name completion [bash|zsh] [--install]" >&2
       exit 1
       ;;
   esac
