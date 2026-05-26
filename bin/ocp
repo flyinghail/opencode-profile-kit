@@ -372,6 +372,9 @@ cmd_clone() {
 
 _rename_profile_locked() {
   local old="$1" new="$2" old_dir="$3" new_dir="$4" created_at tmp
+
+  mv "$old_dir" "$new_dir"
+
   created_at="$(awk -F '\t' -v p="$old" '$1 == p { print $3; exit }' "$PROFILES_DB" 2>/dev/null || true)"
   [[ -n "$created_at" ]] || created_at="$(now_utc)"
 
@@ -511,7 +514,6 @@ cmd_rename() {
   preflight_bins_for_profile_rename "$old"
   preflight_manifest_for_profile_rename "$old_dir"
 
-  mv "$old_dir" "$new_dir"
   with_state_lock _rename_profile_locked "$old" "$new" "$old_dir" "$new_dir"
 
   manifest="$(manifest_path "$new_dir")"
