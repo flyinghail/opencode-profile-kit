@@ -17,6 +17,9 @@ OC_GLOBAL_DIR="$HOME/.config/opencode"
 OC_PROFILES_DIR="${OC_PROFILES_DIR:-$HOME/.opencode-profiles}"
 OC_BIN_DIR="${OC_BIN_DIR:-$HOME/.local/bin}"
 OC_RUNTIME_IGNORE_DEFAULT="session tmp logs semantic index cache .cache"
+GLOBAL_META_DIR="$CONFIG_DIR/global"
+GLOBAL_MANIFEST="$GLOBAL_META_DIR/.ocp-global.json"
+GLOBAL_RECIPE="$GLOBAL_META_DIR/.ocp-recipes"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -289,6 +292,22 @@ require_profile_path() {
   dir="$(profile_lookup_path "$profile")"
   [[ -n "$dir" && -d "$dir" ]] || fail "profile does not exist: $profile"
   echo "$dir"
+}
+
+global_config_dir() {
+  printf '%s\n' "$OC_GLOBAL_DIR"
+}
+
+recipe_path_for_profile_dir() {
+  printf '%s/.ocp-recipes\n' "$1"
+}
+
+recipe_path_for_global() {
+  printf '%s\n' "$GLOBAL_RECIPE"
+}
+
+ensure_global_dirs() {
+  mkdir -p "$OC_GLOBAL_DIR" "$GLOBAL_META_DIR"
 }
 
 copy_profile() {
