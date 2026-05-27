@@ -1889,7 +1889,7 @@ ___CLI___completion() {
           return 0
           ;;
         external)
-          COMPREPLY=( $(compgen -W "add list remove -g --global" -- "$cur") )
+          COMPREPLY=( $(compgen -W "add list remove" -- "$cur") )
           return 0
           ;;
         export)
@@ -2005,6 +2005,14 @@ ___CLI___completion() {
             return 0
           fi
           ;;
+        external)
+          case "${COMP_WORDS[2]}" in
+            add|remove)
+              COMPREPLY=( $(compgen -f -- "$cur") )
+              return 0
+              ;;
+          esac
+          ;;
       esac
       ;;
     5)
@@ -2087,11 +2095,14 @@ ___CLI__() {
       ;;
     external)
       if (( CURRENT == 3 )); then
-        _values 'external subcommand' add list remove '-g' '--global'
+        _values 'external subcommand' add list remove
         return
       elif (( CURRENT == 4 )); then
         _values 'external option' '-g' '--global'
         _describe 'profile' profiles
+        return
+      elif (( CURRENT == 5 )) && [[ "$words[3]" == "add" || "$words[3]" == "remove" ]]; then
+        _files
         return
       fi
       ;;
