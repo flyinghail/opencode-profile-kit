@@ -8,6 +8,7 @@ fail() { echo "test failure: $*" >&2; exit 1; }
 assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
 assert_file_not_contains() { ! grep -Fq "$2" "$1" || fail "expected $1 not to contain: $2"; }
 assert_tar_contains() { tar -tzf "$1" | grep -Fxq "$2" || fail "expected archive $1 to contain: $2"; }
+assert_dir_empty() { [[ -z "$(find "$1" -mindepth 1 -print -quit)" ]] || fail "expected directory to be empty: $1"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -98,6 +99,72 @@ if HOME="$escape_home" XDG_CONFIG_HOME="$tmp/escape-config" XDG_DATA_HOME="$tmp/
 fi
 assert_file_contains "$tmp/escape.err" "external target escapes HOME"
 [[ ! -e "$outside_escape" ]] || fail "escaping external target wrote outside import HOME: $outside_escape"
+
+secret_global="$tmp/secret-global"
+mkdir -p "$secret_global"
+printf 'do not import\n' > "$secret_global/secret.txt"
+symlink_global_stage="$tmp/symlink-global-stage"
+symlink_global_archive="$archives_dir/symlink-global.ocp-global.tar.gz"
+mkdir -p "$symlink_global_stage/global" "$symlink_global_stage/external" "$symlink_global_stage/state"
+cat > "$symlink_global_stage/metadata.env" <<'META'
+format_version="1"
+kind="global"
+profiles=""
+global="1"
+source_home="/source/home"
+created_at="2026-01-01T00:00:00Z"
+META
+ln -s "$secret_global" "$symlink_global_stage/global/config"
+printf '{"name":"global","external":[]}' > "$symlink_global_stage/global/.ocp-global.json"
+(cd "$symlink_global_stage" && tar -czf "$symlink_global_archive" metadata.env global external state)
+symlink_global_home="$tmp/symlink-global-home"
+symlink_global_tmp="$tmp/symlink-global-tmp"
+mkdir -p "$symlink_global_home" "$symlink_global_tmp"
+if TMPDIR="$symlink_global_tmp" HOME="$symlink_global_home" XDG_CONFIG_HOME="$tmp/symlink-global-config" XDG_DATA_HOME="$tmp/symlink-global-data" OC_BIN_DIR="$tmp/symlink-global-bin" "$OCP" import "$symlink_global_archive" > "$tmp/symlink-global.out" 2> "$tmp/symlink-global.err"; then
+  fail "expected symlinked global/config import to fail"
+fi
+assert_file_contains "$tmp/symlink-global.err" "archive contains symlink"
+[[ ! -e "$symlink_global_home/.config/opencode/secret.txt" ]] || fail "symlinked global/config copied arbitrary local data"
+assert_dir_empty "$symlink_global_tmp"
+
+secret_external="$tmp/secret-external"
+mkdir -p "$secret_external"
+printf 'do not import\n' > "$secret_external/secret.txt"
+symlink_external_stage="$tmp/symlink-external-stage"
+symlink_external_archive="$archives_dir/symlink-external.ocp-global.tar.gz"
+mkdir -p "$symlink_external_stage/global/config" "$symlink_external_stage/external/global" "$symlink_external_stage/state"
+cat > "$symlink_external_stage/metadata.env" <<'META'
+format_version="1"
+kind="global"
+profiles=""
+global="1"
+source_home="/source/home"
+created_at="2026-01-01T00:00:00Z"
+META
+cat > "$symlink_external_stage/global/.ocp-global.json" <<'JSON'
+{
+  "name": "global",
+  "external": [
+    {
+      "path": "/source/home/.local/share/symlink-external",
+      "mode": "copy"
+    }
+  ]
+}
+JSON
+ln -s "$secret_external" "$symlink_external_stage/external/global/0"
+printf '/source/home/.local/share/symlink-external\n' > "$symlink_external_stage/external/global/0.target"
+printf 'dir\n' > "$symlink_external_stage/external/global/0.type"
+(cd "$symlink_external_stage" && tar -czf "$symlink_external_archive" metadata.env global external state)
+symlink_external_home="$tmp/symlink-external-home"
+symlink_external_tmp="$tmp/symlink-external-tmp"
+mkdir -p "$symlink_external_home" "$symlink_external_tmp"
+if TMPDIR="$symlink_external_tmp" HOME="$symlink_external_home" XDG_CONFIG_HOME="$tmp/symlink-external-config" XDG_DATA_HOME="$tmp/symlink-external-data" OC_BIN_DIR="$tmp/symlink-external-bin" "$OCP" import "$symlink_external_archive" > "$tmp/symlink-external.out" 2> "$tmp/symlink-external.err"; then
+  fail "expected symlinked external payload import to fail"
+fi
+assert_file_contains "$tmp/symlink-external.err" "archive contains symlink"
+[[ ! -e "$symlink_external_home/.local/share/symlink-external/secret.txt" ]] || fail "symlinked external payload copied arbitrary local data"
+assert_dir_empty "$symlink_external_tmp"
 
 mkdir -p "$HOME/.config/opencode"
 printf 'global config\n' > "$HOME/.config/opencode/opencode.json"

@@ -1665,6 +1665,12 @@ select_import_archive() {
   printf '%s\n' "$matches" | sed -n "${choice}p"
 }
 
+validate_archive_stage() {
+  local stage="$1" symlink
+  symlink="$(find "$stage" -type l -print -quit 2>/dev/null || true)"
+  [[ -z "$symlink" ]] || fail "archive contains symlink: ${symlink#"$stage/"}"
+}
+
 confirm_import_conflict() {
   local target="$1" force="$2" skip_existing="$3" yes="$4" answer
   [[ ! -e "$target" ]] && return 0
@@ -2013,6 +2019,7 @@ cmd_import() {
     trap - EXIT
     return "$status"
   }
+  validate_archive_stage "$stage"
 
   metadata="$stage/metadata.env"
   [[ -f "$metadata" ]] || fail "archive metadata missing: metadata.env"
