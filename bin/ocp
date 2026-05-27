@@ -1454,9 +1454,15 @@ cmd_upgrade() {
 }
 
 resolve_home_external_path() {
-  local path resolved
-  resolved="$(expand_home_path "$1")"
-  case "$resolved" in "$HOME"/*) printf '%s\n' "$resolved" ;; *) fail "external path must be under HOME: $1" ;; esac
+  local path resolved home_resolved
+  path="$1"
+  resolved="$(realpath -m -- "$(expand_home_path "$path")")"
+  home_resolved="$(realpath -m -- "$HOME")"
+
+  case "$resolved" in
+    "$home_resolved"/*) printf '%s\n' "$resolved" ;;
+    *) fail "external path must be under HOME: $path" ;;
+  esac
 }
 
 external_manifest_for_target() {
