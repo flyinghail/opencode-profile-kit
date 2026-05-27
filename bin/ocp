@@ -982,7 +982,7 @@ run_recipe_script() {
   script="$tmp_dir/recipe.sh"
   recipe_body_to_script "$recipe" "$script"
   (
-    cd "$work_dir"
+    cd "$work_dir" || exit $?
     export OCP_TARGET="$target"
     export OCP_PROFILE="$profile"
     export OPENCODE_CONFIG_DIR="$config_dir"
