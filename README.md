@@ -35,6 +35,7 @@ This tool is for people who want OpenCode profile management to be boring, local
 - [Installing Into a Profile](#installing-into-a-profile)
 - [Capturing Global Installers](#capturing-global-installers)
 - [Upgrade Recipes](#upgrade-recipes)
+- [Migration Archives](#migration-archives)
 - [Rewriting Hardcoded Paths](#rewriting-hardcoded-paths)
 - [Clone](#clone)
 - [Shared Config Links](#shared-config-links)
@@ -140,15 +141,16 @@ ocp upgrade show <profile>
 ocp upgrade show -g
 
 ocp external add <profile> <path>
-ocp external list <profile>
-ocp external remove <profile> <path>
 ocp external add -g <path>
+ocp external list <profile>
 ocp external list -g
+ocp external remove <profile> <path>
 ocp external remove -g <path>
 
-ocp export [-f|--force] <profile> [archive.tar.gz]
-ocp export [-f|--force] -g [archive.tar.gz]
-ocp export [-f|--force] -a [-g] [archive.tar.gz]
+ocp export [-f|--force] <profile> [file.tar.gz]
+ocp export [-f|--force] -a [file.tar.gz]
+ocp export [-f|--force] -g [file.tar.gz]
+ocp export [-f|--force] -a -g [file.tar.gz]
 ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz]
 
 ocp capture <profile> -- <command...>
@@ -349,6 +351,68 @@ ocp upgrade -g
 ```
 
 Recipes are Bash scripts. Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
+
+---
+
+## Migration Archives
+
+Export one profile:
+
+```bash
+ocp export my-profile
+```
+
+Export all profiles, global OpenCode config, or both:
+
+```bash
+ocp export -a
+ocp export -g
+ocp export -a -g
+```
+
+Default archive names are based on what is exported:
+
+```text
+<profile>.ocp-profile.tar.gz
+all.ocp.tar.gz
+global.ocp-global.tar.gz
+all-with-global.ocp.tar.gz
+```
+
+Use `-f` or `--force` to overwrite an existing archive path.
+
+`--all` and `--global` are long aliases for `-a` and `-g`.
+
+Global migration archives include `~/.config/opencode` plus opencode-profile-kit global metadata from `~/.config/opencode-profile-kit/global`, including the global manifest and global upgrade recipe when present.
+
+External allowlists let a profile or the global config include additional files or directories under `$HOME` that live outside the main profile/global config tree:
+
+```bash
+ocp external add my-profile ~/.local/share/my-tool
+ocp external add -g ~/.local/share/global-tool
+ocp external list my-profile
+ocp external list -g
+ocp external remove my-profile ~/.local/share/my-tool
+ocp external remove -g ~/.local/share/global-tool
+```
+
+Import restores the archive into the current `$HOME` and rebases external allowlist paths from the source home to the destination home:
+
+```bash
+ocp import archive.ocp.tar.gz
+```
+
+When an import destination already exists, use one conflict policy:
+
+```bash
+ocp import -f archive.ocp.tar.gz             # overwrite existing destinations
+ocp import --force archive.ocp.tar.gz        # same as -f
+ocp import --skip-existing archive.ocp.tar.gz # keep existing destinations
+ocp import -y archive.ocp.tar.gz             # answer yes to prompts
+ocp import --yes archive.ocp.tar.gz          # same as -y
+```
+
+If no archive is provided interactively, `ocp import` looks for one `.ocp` archive in the current directory and prompts when multiple candidates exist.
 
 ---
 

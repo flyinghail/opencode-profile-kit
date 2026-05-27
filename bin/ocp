@@ -62,15 +62,18 @@ Usage:
   ocp upgrade show <profile>                  Show a profile upgrade recipe
   ocp upgrade show -g                         Show the global upgrade recipe
 
-  ocp external add <profile> <path>            Track an external HOME path for migration
-  ocp external list <profile>                  List external migration paths
-  ocp external remove <profile> <path>         Stop tracking an external HOME path
-  ocp external add|list|remove -g [path]       Manage global external migration paths
+  ocp external add <profile> <path>            Track a profile external HOME path
+  ocp external add -g <path>                   Track a global external HOME path
+  ocp external list <profile>                  List profile external paths
+  ocp external list -g                         List global external paths
+  ocp external remove <profile> <path>         Stop tracking a profile external path
+  ocp external remove -g <path>                Stop tracking a global external path
 
-  ocp export [-f|--force] <profile> [archive.tar.gz] Export a profile migration archive
-  ocp export [-f|--force] -g [archive.tar.gz]  Export the global migration archive
-  ocp export [-f|--force] -a [-g] [archive.tar.gz] Export all profiles, optionally with global config
-  ocp import [-f|--force|--skip-existing|-y|--yes] [archive.tar.gz] Import a migration archive
+  ocp export [-f|--force] <profile> [file.tar.gz] Export a profile migration archive
+  ocp export [-f|--force] -a [file.tar.gz]     Export an all-profiles migration archive
+  ocp export [-f|--force] -g [file.tar.gz]     Export the global migration archive
+  ocp export [-f|--force] -a -g [file.tar.gz]  Export all profiles plus global config
+  ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz] Import a migration archive
 
   ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
   ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
@@ -2003,7 +2006,7 @@ cmd_import() {
       -y|--yes) yes=1; shift ;;
       -*) fail "unknown option for import: $1" ;;
       *)
-        [[ -z "$file" ]] || fail "usage: ocp import [-f|--force|--skip-existing|-y|--yes] [archive.tar.gz]"
+        [[ -z "$file" ]] || fail "usage: ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz]"
         file="$1"
         shift
         ;;
@@ -2309,6 +2312,11 @@ ___CLI___completion() {
               ;;
           esac
           ;;
+        export)
+          COMPREPLY=( $(compgen -W "-a --all -g --global -f --force" -- "$cur") )
+          COMPREPLY+=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
       esac
       ;;
     5)
@@ -2386,6 +2394,9 @@ ___CLI__() {
         _values 'export option' '-a' '--all' '-g' '--global' '-f' '--force'
         _describe 'profile' profiles
         return
+      fi
+      if (( CURRENT <= 5 )); then
+        _values 'export option' '-a' '--all' '-g' '--global' '-f' '--force'
       fi
       _files
       return
