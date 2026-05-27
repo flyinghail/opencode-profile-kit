@@ -53,8 +53,13 @@ fi
 "$OCP" upgrade show alpha > "$tmp/show-profile"
 assert_file_contains "$tmp/show-profile" "rewrite-paths=true"
 
-printf 'n\n' | "$OCP" upgrade init alpha >/dev/null
+if "$OCP" upgrade init alpha >/dev/null 2>&1; then
+  fail "upgrade init unexpectedly overwrote existing recipe"
+fi
 assert_file_contains "$alpha_dir/.ocp-recipes" "rewrite-paths=true"
+
+printf 'n\n\n' | "$OCP" upgrade init --force alpha >/dev/null
+assert_file_contains "$alpha_dir/.ocp-recipes" "rewrite-paths=false"
 
 global_recipe="$XDG_CONFIG_HOME/opencode-profile-kit/global/.ocp-recipes"
 mkdir -p "$(dirname "$global_recipe")"
