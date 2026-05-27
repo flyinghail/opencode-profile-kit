@@ -1739,7 +1739,7 @@ cmd_export() {
 
   local stage
   stage="$(mktemp -d)" || return 1
-  trap "rm -rf '$stage'; trap - RETURN" RETURN
+  trap 'rm -rf "$stage"' EXIT
 
   if [[ "$all" == "1" ]]; then
     profile_list="$(profile_export_names)"
@@ -1765,6 +1765,8 @@ cmd_export() {
 
   write_archive_metadata "$stage/metadata.env" "$kind" "$profiles" "$global"
   create_export_archive "$stage" "$file"
+  rm -rf "$stage"
+  trap - EXIT
   echo "exported: $file"
 }
 
