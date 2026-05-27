@@ -67,6 +67,10 @@ Usage:
   ocp external remove <profile> <path>         Stop tracking an external HOME path
   ocp external add|list|remove -g [path]       Manage global external migration paths
 
+  ocp export <profile> [archive.tar.gz]        Export a profile migration archive
+  ocp export -g [archive.tar.gz]               Export the global migration archive
+  ocp export -a [-g] [archive.tar.gz]          Export all profiles, optionally with global config
+
   ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
   ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
   ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
@@ -1623,6 +1627,145 @@ stage_external_paths() {
   done < <(manifest_external_list "$manifest")
 }
 
+confirm_overwrite_archive() {
+  local file="$1" force="$2" answer
+  [[ ! -e "$file" ]] && return 0
+  [[ "$force" == "1" ]] && return 0
+  [[ -t 0 ]] || fail "archive exists: $file; use --force"
+  printf 'overwrite %s? [y/N] ' "$file" >&2
+  IFS= read -r answer
+  [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" ]] || fail "archive exists: $file"
+}
+
+stage_profile_export() {
+  local profile="$1" stage="$2" dir manifest
+  dir="$(require_profile_path "$profile")"
+  manifest="$(manifest_path "$dir")"
+  copy_runtime_filtered "$dir" "$stage/profiles/$profile"
+  mkdir -p "$stage/state"
+  awk -F '\t' -v p="$profile" '$1 == p' "$PROFILES_DB" >> "$stage/state/profiles.tsv" 2>/dev/null || true
+  awk -F '\t' -v p="$profile" '$2 == p' "$BINS_DB" >> "$stage/state/bins.tsv" 2>/dev/null || true
+  [[ -f "$manifest" ]] && stage_external_paths "$manifest" "$stage/external/$profile"
+}
+
+stage_global_export() {
+  local stage="$1"
+  ensure_global_dirs
+  [[ -d "$OC_GLOBAL_DIR" ]] && copy_runtime_filtered "$OC_GLOBAL_DIR" "$stage/global/config" || mkdir -p "$stage/global/config"
+  [[ -f "$GLOBAL_MANIFEST" ]] && cp "$GLOBAL_MANIFEST" "$stage/global/.ocp-global.json"
+  [[ -f "$GLOBAL_RECIPE" ]] && cp "$GLOBAL_RECIPE" "$stage/global/.ocp-recipes"
+  [[ -f "$GLOBAL_MANIFEST" ]] && stage_external_paths "$GLOBAL_MANIFEST" "$stage/external/global"
+}
+
+archive_abs_path() {
+  local file="$1" parent base
+  parent="$(dirname "$file")"
+  base="$(basename "$file")"
+  [[ -d "$parent" ]] || fail "archive directory does not exist: $parent"
+  parent="$(cd "$parent" && pwd -P)"
+  printf '%s/%s\n' "$parent" "$base"
+}
+
+create_export_archive() {
+  local stage="$1" file="$2"
+  local -a entries=()
+  [[ -e "$stage/metadata.env" ]] && entries+=(metadata.env)
+  [[ -e "$stage/profiles" ]] && entries+=(profiles)
+  [[ -e "$stage/state" ]] && entries+=(state)
+  [[ -e "$stage/global" ]] && entries+=(global)
+  [[ -e "$stage/external" ]] && entries+=(external)
+  (( ${#entries[@]} > 0 )) || fail "nothing to export"
+  (cd "$stage" && tar -czf "$file" "${entries[@]}")
+}
+
+profile_export_names() {
+  local profiles=()
+  while IFS= read -r profile; do
+    [[ -n "$profile" ]] && profiles+=("$profile")
+  done < <(cmd_list)
+  printf '%s\n' "${profiles[@]}"
+}
+
+cmd_export() {
+  local all=0 global=0 force=0 profile="" file="" kind profiles="" profile_list=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -a|--all) all=1; shift ;;
+      -g|--global) global=1; shift ;;
+      -f|--force) force=1; shift ;;
+      -*) fail "unknown option for export: $1" ;;
+      *)
+        if [[ -z "$profile" && "$all" == "0" && "$global" == "0" ]]; then
+          profile="$1"
+        elif [[ -z "$file" ]]; then
+          file="$1"
+        else
+          fail "usage: ocp export [-a] [-g] [-f|--force] [profile] [archive.tar.gz]"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$all" == "1" && -n "$profile" ]]; then
+    fail "profile cannot be combined with --all"
+  fi
+  if [[ "$global" == "1" && -n "$profile" ]]; then
+    fail "profile cannot be combined with --global"
+  fi
+  if [[ "$all" == "0" && "$global" == "0" ]]; then
+    [[ -n "$profile" ]] || fail "profile is required"
+    ensure_profile_name "$profile"
+  fi
+  if [[ -n "$file" && "$file" != *.tar.gz ]]; then
+    fail "archive must end with .tar.gz: $file"
+  fi
+
+  if [[ -z "$file" ]]; then
+    if [[ "$all" == "1" && "$global" == "1" ]]; then
+      file="all-with-global.ocp.tar.gz"
+    elif [[ "$all" == "1" ]]; then
+      file="all.ocp.tar.gz"
+    elif [[ "$global" == "1" ]]; then
+      file="global.ocp-global.tar.gz"
+    else
+      file="$profile.ocp-profile.tar.gz"
+    fi
+  fi
+  file="$(archive_abs_path "$file")"
+  confirm_overwrite_archive "$file" "$force"
+
+  local stage
+  stage="$(mktemp -d)" || return 1
+  trap "rm -rf '$stage'; trap - RETURN" RETURN
+
+  if [[ "$all" == "1" ]]; then
+    profile_list="$(profile_export_names)"
+    profiles="${profile_list//$'\n'/ }"
+    while IFS= read -r profile; do
+      [[ -n "$profile" ]] || continue
+      stage_profile_export "$profile" "$stage"
+    done < <(printf '%s\n' "$profile_list")
+    if [[ "$global" == "1" ]]; then
+      kind="all-with-global"
+      stage_global_export "$stage"
+    else
+      kind="all"
+    fi
+  elif [[ "$global" == "1" ]]; then
+    kind="global"
+    stage_global_export "$stage"
+  else
+    kind="profile"
+    profiles="$profile"
+    stage_profile_export "$profile" "$stage"
+  fi
+
+  write_archive_metadata "$stage/metadata.env" "$kind" "$profiles" "$global"
+  create_export_archive "$stage" "$file"
+  echo "exported: $file"
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
@@ -1718,7 +1861,7 @@ ___CLI___completion() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   cmd="${COMP_WORDS[1]}"
 
-  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external capture rewrite-paths list path refresh doctor completion config help"
+  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external export capture rewrite-paths list path refresh doctor completion config help"
 
   case "$COMP_CWORD" in
     1)
@@ -1727,7 +1870,7 @@ ___CLI___completion() {
       ;;
     2)
       case "$cmd" in
-        run|shell|exec|env|link|capture|rewrite-paths|path|rename|remove|doctor|clone)
+        run|shell|exec|env|link|export|capture|rewrite-paths|path|rename|remove|doctor|clone)
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
@@ -1735,6 +1878,12 @@ ___CLI___completion() {
           ;;
         external)
           COMPREPLY=( $(compgen -W "add list remove -g --global" -- "$cur") )
+          return 0
+          ;;
+        export)
+          local profiles
+          profiles="$(__CLI__ list 2>/dev/null)"
+          COMPREPLY=( $(compgen -W "-a --all -g --global -f --force $profiles" -- "$cur") )
           return 0
           ;;
         bin)
@@ -1811,6 +1960,11 @@ ___CLI___completion() {
           COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
           return 0
           ;;
+        export)
+          COMPREPLY=( $(compgen -W "-a --all -g --global -f --force" -- "$cur") )
+          COMPREPLY+=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
       esac
       ;;
     4)
@@ -1883,6 +2037,7 @@ ___CLI__() {
     'bin:Create a profile launcher command'
     'upgrade:Run upgrade recipes'
     'external:Manage external migration paths'
+    'export:Export migration archives'
     'capture:Capture changes from a global-path installer'
     'rewrite-paths:Rewrite hardcoded OpenCode paths in markdown files'
     'list:List profiles'
@@ -1908,6 +2063,15 @@ ___CLI__() {
         _describe 'profile' profiles
         return
       fi
+      ;;
+    export)
+      if (( CURRENT == 3 )); then
+        _values 'export option' '-a' '--all' '-g' '--global' '-f' '--force'
+        _describe 'profile' profiles
+        return
+      fi
+      _files
+      return
       ;;
     external)
       if (( CURRENT == 3 )); then
@@ -2220,6 +2384,7 @@ main() {
     bin) cmd_bin "$@" ;;
     upgrade) cmd_upgrade "$@" ;;
     external) cmd_external "$@" ;;
+    export) cmd_export "$@" ;;
     capture) cmd_capture "${1:-}" "${@:2}" ;;
     rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
     list) cmd_list "$@" ;;
