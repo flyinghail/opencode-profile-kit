@@ -69,6 +69,13 @@ USAGE
 fail() { echo "ocp: $*" >&2; exit 1; }
 ensure_state() { mkdir -p "$STATE_DIR"; touch "$PROFILES_DB" "$BINS_DB"; }
 
+prompt_yes_no() {
+  local prompt="$1" answer
+  printf '%s [y/N] ' "$prompt" >&2
+  IFS= read -r answer
+  case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
 current_cli_name() {
   basename "$0"
 }
@@ -1050,8 +1057,39 @@ cmd_upgrade_edit_global() {
   "$editor" "$recipe"
 }
 
+cmd_upgrade_init_write() {
+  local recipe="$1" force="$2" global="$3" rewrite="false" command
+  if [[ -e "$recipe" && "$force" != "1" ]]; then
+    fail "recipe already exists: $recipe; use --force"
+  fi
+  mkdir -p "$(dirname "$recipe")"
+  if [[ "$global" != "1" ]] && prompt_yes_no "Run rewrite-paths after successful upgrade?"; then
+    rewrite="true"
+  fi
+  {
+    [[ "$global" == "1" ]] || printf 'rewrite-paths=%s\n\n' "$rewrite"
+    while true; do
+      printf 'install command (blank to finish): ' >&2
+      IFS= read -r command || break
+      [[ -n "$command" ]] || break
+      printf '%s\n' "$command"
+    done
+  } > "$recipe"
+  echo "created recipe: $recipe"
+}
+
 cmd_upgrade_init_dispatch() {
-  fail "upgrade init is not implemented yet"
+  local global="$1" force="$2" profile="$3" dir recipe
+  if [[ "$global" == "1" ]]; then
+    [[ -z "$profile" ]] || fail "profile cannot be combined with --global"
+    ensure_global_dirs
+    cmd_upgrade_init_write "$(recipe_path_for_global)" "$force" 1
+  else
+    [[ -n "$profile" ]] || fail "profile is required"
+    dir="$(require_profile_path "$profile")"
+    recipe="$(recipe_path_for_profile_dir "$dir")"
+    cmd_upgrade_init_write "$recipe" "$force" 0
+  fi
 }
 
 cmd_upgrade() {
