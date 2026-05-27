@@ -267,7 +267,7 @@ Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
 ~/.config/opencode
 ```
 
-For those tools, use:
+Legacy capture invocation:
 
 ```bash
 ocp capture my-profile -- npx <package> install
@@ -280,7 +280,7 @@ ocp capture my-profile -- npx <package> install
 3. copy resulting changes into the target profile
 4. restore the original global config
 
-This allows profile-isolated installation even for tools that hardcode global paths.
+This can provide profile-isolated installation even for tools that hardcode global paths, but it remains deprecated. For new workflows, write an explicit recipe under [Upgrade Recipes](#upgrade-recipes) instead.
 
 `capture` requires `rsync`.
 
@@ -385,7 +385,9 @@ ocp rewrite-paths my-profile /.config/opencode/agents
 ocp rewrite-paths my-profile /.config/opencode/commands
 ```
 
-Typical workflow for global-path installers:
+For new global-path installer workflows, prefer an explicit recipe under [Upgrade Recipes](#upgrade-recipes) and enable `rewrite-paths=true` when generated markdown should be rewritten after a successful upgrade.
+
+Legacy capture workflow:
 
 ```bash
 ocp capture my-profile -- npx <package> install

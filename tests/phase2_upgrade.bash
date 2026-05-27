@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OCP="$ROOT/bin/ocp"
+export PATH="$ROOT/bin:$PATH"
 
 fail() { echo "test failure: $*" >&2; exit 1; }
 assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
@@ -19,6 +20,16 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OC_BIN_DIR"
 
 "$OCP" new alpha >/dev/null
 alpha_dir="$HOME/.opencode-profiles/alpha"
+
+"$OCP" completion bash > "$tmp/ocp.bash-completion"
+completion_output="$(bash -c 'source "$1"; COMP_WORDS=(ocp upgrade ""); COMP_CWORD=2; _ocp_completion; printf "%s\n" "${COMPREPLY[@]}"' _ "$tmp/ocp.bash-completion")"
+grep -Fxq 'init' <<< "$completion_output" || fail "upgrade completion did not include init"
+grep -Fxq 'edit' <<< "$completion_output" || fail "upgrade completion did not include edit"
+grep -Fxq 'show' <<< "$completion_output" || fail "upgrade completion did not include show"
+grep -Fxq 'run' <<< "$completion_output" || fail "upgrade completion did not include run"
+grep -Fxq -- '-g' <<< "$completion_output" || fail "upgrade completion did not include -g"
+grep -Fxq -- '--global' <<< "$completion_output" || fail "upgrade completion did not include --global"
+grep -Fxq 'alpha' <<< "$completion_output" || fail "upgrade completion did not include profile names"
 
 cat > "$alpha_dir/.ocp-recipes" <<'SCRIPT'
 rewrite-paths=false

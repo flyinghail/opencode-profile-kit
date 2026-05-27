@@ -1242,6 +1242,12 @@ ___CLI___completion() {
           COMPREPLY=( $(compgen -W "create list remove repair" -- "$cur") )
           return 0
           ;;
+        upgrade)
+          local profiles
+          profiles="$(__CLI__ list 2>/dev/null)"
+          COMPREPLY=( $(compgen -W "init edit show run -g --global $profiles" -- "$cur") )
+          return 0
+          ;;
         completion)
           COMPREPLY=( $(compgen -W "bash zsh --install" -- "$cur") )
           return 0
@@ -1284,6 +1290,22 @@ ___CLI___completion() {
               ;;
           esac
           ;;
+        upgrade)
+          case "$prev" in
+            init)
+              local profiles
+              profiles="$(__CLI__ list 2>/dev/null)"
+              COMPREPLY=( $(compgen -W "-f --force -g --global $profiles" -- "$cur") )
+              return 0
+              ;;
+            edit|show|run|-f|--force)
+              local profiles
+              profiles="$(__CLI__ list 2>/dev/null)"
+              COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
+              return 0
+              ;;
+          esac
+          ;;
       esac
       ;;
     4)
@@ -1303,6 +1325,14 @@ ___CLI___completion() {
         link)
           COMPREPLY=( $(compgen -W "--force" -- "$cur") )
           return 0
+          ;;
+        upgrade)
+          if [[ "$prev" == "-f" || "$prev" == "--force" ]]; then
+            local profiles
+            profiles="$(__CLI__ list 2>/dev/null)"
+            COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
+            return 0
+          fi
           ;;
       esac
       ;;
@@ -1382,6 +1412,25 @@ ___CLI__() {
         return
       elif (( CURRENT == 4 )) && [[ "$words[3]" == "repair" ]]; then
         _values 'bin repair option' '--all'
+        return
+      fi
+      ;;
+    upgrade)
+      if (( CURRENT == 3 )); then
+        _values 'upgrade target or subcommand' init edit show run '-g' '--global'
+        _describe 'profile' profiles
+        return
+      elif (( CURRENT == 4 )) && [[ "$words[3]" == "init" ]]; then
+        _values 'upgrade init option' '-f' '--force' '-g' '--global'
+        _describe 'profile' profiles
+        return
+      elif (( CURRENT == 4 )) && [[ "$words[3]" == "edit" || "$words[3]" == "show" || "$words[3]" == "run" || "$words[3]" == "-f" || "$words[3]" == "--force" ]]; then
+        _values 'upgrade target option' '-g' '--global'
+        _describe 'profile' profiles
+        return
+      elif (( CURRENT == 5 )) && [[ "$words[3]" == "init" && ( "$words[4]" == "-f" || "$words[4]" == "--force" ) ]]; then
+        _values 'upgrade target option' '-g' '--global'
+        _describe 'profile' profiles
         return
       fi
       ;;
