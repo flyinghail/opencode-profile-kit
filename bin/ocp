@@ -1062,6 +1062,9 @@ cmd_upgrade_init_write() {
   if [[ ( -e "$recipe" || -L "$recipe" ) && "$force" != "1" ]]; then
     fail "recipe already exists: $recipe; use --force"
   fi
+  if [[ "$force" == "1" && -L "$recipe" ]]; then
+    rm -f "$recipe"
+  fi
   mkdir -p "$(dirname "$recipe")"
   if [[ "$global" != "1" ]] && prompt_yes_no "Run rewrite-paths after successful upgrade?"; then
     rewrite="true"
