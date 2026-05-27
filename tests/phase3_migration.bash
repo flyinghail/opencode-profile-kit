@@ -100,6 +100,38 @@ fi
 assert_file_contains "$tmp/escape.err" "external target escapes HOME"
 [[ ! -e "$outside_escape" ]] || fail "escaping external target wrote outside import HOME: $outside_escape"
 
+equals_stage="$tmp/equals-stage"
+equals_archive="$archives_dir/equals-source-home.ocp-profile.tar.gz"
+mkdir -p "$equals_stage/profiles/alpha" "$equals_stage/external/alpha/0" "$equals_stage/state"
+cat > "$equals_stage/metadata.env" <<'META'
+format_version="1"
+kind="profile"
+profiles="alpha"
+global="0"
+source_home="/source/home=with=equals"
+created_at="2026-01-01T00:00:00Z"
+META
+cat > "$equals_stage/profiles/alpha/.ocp-profile.json" <<'JSON'
+{
+  "name": "alpha",
+  "external": [
+    {
+      "path": "/source/home=with=equals/arbitrary/nested/external-path",
+      "mode": "copy"
+    }
+  ]
+}
+JSON
+printf 'equals source home\n' > "$equals_stage/external/alpha/0/data.txt"
+printf '/source/home=with=equals/arbitrary/nested/external-path\n' > "$equals_stage/external/alpha/0.target"
+printf 'dir\n' > "$equals_stage/external/alpha/0.type"
+(cd "$equals_stage" && tar -czf "$equals_archive" metadata.env profiles state external)
+equals_import_home="$tmp/equals-import-home"
+mkdir -p "$equals_import_home"
+HOME="$equals_import_home" XDG_CONFIG_HOME="$tmp/equals-config" XDG_DATA_HOME="$tmp/equals-data" OC_BIN_DIR="$tmp/equals-bin" "$OCP" import "$equals_archive" >/dev/null
+assert_file_contains "$equals_import_home/arbitrary/nested/external-path/data.txt" "equals source home"
+[[ ! -e "$equals_import_home/external-path/data.txt" ]] || fail "source_home with equals fell back to basename external restore"
+
 secret_global="$tmp/secret-global"
 mkdir -p "$secret_global"
 printf 'do not import\n' > "$secret_global/secret.txt"

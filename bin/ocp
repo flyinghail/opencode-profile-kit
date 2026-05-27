@@ -1649,7 +1649,18 @@ confirm_overwrite_archive() {
 
 archive_metadata_value() {
   local metadata="$1" key="$2"
-  awk -F '=' -v k="$key" '$1 == k { gsub(/^"|"$/, "", $2); print $2; exit }' "$metadata"
+  awk -v k="$key" '
+    {
+      equals = index($0, "=")
+      if (equals == 0) next
+      if (substr($0, 1, equals - 1) == k) {
+        value = substr($0, equals + 1)
+        gsub(/^"|"$/, "", value)
+        print value
+        exit
+      }
+    }
+  ' "$metadata"
 }
 
 select_import_archive() {
