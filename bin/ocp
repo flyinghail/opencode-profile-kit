@@ -263,7 +263,8 @@ manifest_external_list() {
         } else if (c == "\\") {
           esc = 1
         } else if (c == "\"") {
-          print out
+          string_value = out
+          if (!suppress_print) print out
           return i + 1
         } else {
           out = out c
@@ -271,8 +272,63 @@ manifest_external_list() {
       }
       return length(json) + 1
     }
+    function array_end(start,    i,c,depth,in_string,esc) {
+      depth = 0; in_string = 0; esc = 0
+      for (i = start; i <= length(json); i++) {
+        c = substr(json, i, 1)
+        if (in_string) {
+          if (esc) esc = 0
+          else if (c == "\\") esc = 1
+          else if (c == "\"") in_string = 0
+        } else if (c == "\"") {
+          in_string = 1
+        } else if (c == "[") {
+          depth++
+        } else if (c == "]") {
+          depth--
+          if (depth == 0) return i
+        }
+      }
+      return 0
+    }
+    function find_external_array(    i,c,obj_depth,array_depth,end) {
+      obj_depth = 0; array_depth = 0
+      suppress_print = 1
+      for (i = 1; i <= length(json); i++) {
+        c = substr(json, i, 1)
+        if (c == "\"") {
+          end = read_string(i + 1)
+          if (obj_depth == 1 && array_depth == 0 && string_value == "external") {
+            i = end
+            while (i <= length(json) && substr(json, i, 1) ~ /[[:space:]]/) i++
+            if (substr(json, i, 1) != ":") continue
+            i++
+            while (i <= length(json) && substr(json, i, 1) ~ /[[:space:]]/) i++
+            if (substr(json, i, 1) == "[") {
+              suppress_print = 0
+              return i
+            }
+          }
+          i = end - 1
+        } else if (c == "{") {
+          obj_depth++
+        } else if (c == "}") {
+          obj_depth--
+        } else if (c == "[") {
+          array_depth++
+        } else if (c == "]") {
+          array_depth--
+        }
+      }
+      suppress_print = 0
+      return 0
+    }
     { json = json $0 "\n" }
     END {
+      open = find_external_array()
+      close_pos = open ? array_end(open) : 0
+      if (!open || !close_pos) exit
+      json = substr(json, open, close_pos - open + 1)
       pos = 1
       while ((rel = index(substr(json, pos), "\"path\"")) > 0) {
         pos += rel + 5

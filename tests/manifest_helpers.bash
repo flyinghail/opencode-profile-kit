@@ -29,6 +29,12 @@ assert_external_count() {
   [[ "$count" == "$expected" ]] || fail "expected $expected external entries in $manifest, found $count"
 }
 
+assert_external_list_count() {
+  local list="$1" expected="$2" count
+  count="$(grep -c '^' "$list" || true)"
+  [[ "$count" == "$expected" ]] || fail "expected $expected listed external entries in $list, found $count"
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -86,6 +92,26 @@ manifest_external_list "$compact_populated" > "$tmp/compact-populated-removed-li
 assert_list_not_contains "$tmp/compact-populated-removed-list" "/tmp/one"
 assert_list_contains "$tmp/compact-populated-removed-list" "/tmp/two"
 assert_file_not_contains "$compact_populated" '{}'
+
+unrelated_path_manifest="$tmp/unrelated-path.json"
+printf '%s\n' '{"name":"scoped","other":{"path":"/tmp/not-external"},"external":[]}' > "$unrelated_path_manifest"
+manifest_external_list "$unrelated_path_manifest" > "$tmp/unrelated-path-list"
+assert_external_list_count "$tmp/unrelated-path-list" 0
+assert_list_not_contains "$tmp/unrelated-path-list" "/tmp/not-external"
+
+manifest_external_add "$unrelated_path_manifest" "/tmp/external"
+validate_manifest "$unrelated_path_manifest"
+manifest_external_list "$unrelated_path_manifest" > "$tmp/unrelated-path-added-list"
+assert_external_list_count "$tmp/unrelated-path-added-list" 1
+assert_list_contains "$tmp/unrelated-path-added-list" "/tmp/external"
+assert_list_not_contains "$tmp/unrelated-path-added-list" "/tmp/not-external"
+
+manifest_external_remove "$unrelated_path_manifest" "/tmp/external"
+validate_manifest "$unrelated_path_manifest"
+manifest_external_list "$unrelated_path_manifest" > "$tmp/unrelated-path-removed-list"
+assert_external_list_count "$tmp/unrelated-path-removed-list" 0
+assert_list_not_contains "$tmp/unrelated-path-removed-list" "/tmp/not-external"
+assert_file_contains "$unrelated_path_manifest" '"other":{"path":"/tmp/not-external"}'
 
 escaped_manifest="$tmp/escaped.json"
 printf '{"name":"escaped","external":[]}\n' > "$escaped_manifest"
