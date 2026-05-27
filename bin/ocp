@@ -1645,16 +1645,18 @@ stage_profile_export() {
   mkdir -p "$stage/state"
   awk -F '\t' -v p="$profile" '$1 == p' "$PROFILES_DB" >> "$stage/state/profiles.tsv" 2>/dev/null || true
   awk -F '\t' -v p="$profile" '$2 == p' "$BINS_DB" >> "$stage/state/bins.tsv" 2>/dev/null || true
-  [[ -f "$manifest" ]] && stage_external_paths "$manifest" "$stage/external/$profile"
+  if [[ -f "$manifest" ]]; then
+    stage_external_paths "$manifest" "$stage/external/$profile"
+  fi
 }
 
 stage_global_export() {
   local stage="$1"
-  ensure_global_dirs
+  ensure_global_manifest
   [[ -d "$OC_GLOBAL_DIR" ]] && copy_runtime_filtered "$OC_GLOBAL_DIR" "$stage/global/config" || mkdir -p "$stage/global/config"
-  [[ -f "$GLOBAL_MANIFEST" ]] && cp "$GLOBAL_MANIFEST" "$stage/global/.ocp-global.json"
+  cp "$GLOBAL_MANIFEST" "$stage/global/.ocp-global.json"
   [[ -f "$GLOBAL_RECIPE" ]] && cp "$GLOBAL_RECIPE" "$stage/global/.ocp-recipes"
-  [[ -f "$GLOBAL_MANIFEST" ]] && stage_external_paths "$GLOBAL_MANIFEST" "$stage/external/global"
+  stage_external_paths "$GLOBAL_MANIFEST" "$stage/external/global"
 }
 
 archive_abs_path() {
@@ -1870,7 +1872,7 @@ ___CLI___completion() {
       ;;
     2)
       case "$cmd" in
-        run|shell|exec|env|link|export|capture|rewrite-paths|path|rename|remove|doctor|clone)
+        run|shell|exec|env|link|capture|rewrite-paths|path|rename|remove|doctor|clone)
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
