@@ -149,7 +149,7 @@ ocp external remove -g <path>
 ocp export [-f|--force] <profile> [archive.tar.gz]
 ocp export [-f|--force] -g [archive.tar.gz]
 ocp export [-f|--force] -a [-g] [archive.tar.gz]
-ocp import [-f|--skip-existing|-y] [file.tar.gz]
+ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz]
 
 ocp capture <profile> -- <command...>
 ocp capture <profile> --stdin
