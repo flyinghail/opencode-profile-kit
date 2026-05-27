@@ -943,6 +943,55 @@ cmd_doctor() {
   fi
 }
 
+recipe_rewrite_paths_enabled() {
+  local recipe="$1" first
+  first="$(grep -v '^[[:space:]]*#' "$recipe" | sed '/^[[:space:]]*$/d' | head -n 1 || true)"
+  case "$first" in
+    rewrite-paths=true) return 0 ;;
+    rewrite-paths=false|"") return 1 ;;
+    rewrite-paths=*) fail "invalid recipe header: $first" ;;
+    *) return 1 ;;
+  esac
+}
+
+recipe_body_to_script() {
+  local recipe="$1" output="$2" skipped=0 line first_seen=0
+  : > "$output"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$first_seen" == "0" && "$line" =~ ^[[:space:]]*# ]]; then
+      printf '%s\n' "$line" >> "$output"
+      continue
+    fi
+    if [[ "$first_seen" == "0" && "$line" =~ ^[[:space:]]*$ ]]; then
+      printf '%s\n' "$line" >> "$output"
+      continue
+    fi
+    first_seen=1
+    if [[ "$skipped" == "0" && "$line" == rewrite-paths=* ]]; then
+      skipped=1
+      continue
+    fi
+    printf '%s\n' "$line" >> "$output"
+  done < "$recipe"
+}
+
+run_recipe_script() {
+  local target="$1" profile="$2" config_dir="$3" work_dir="$4" recipe="$5" tmp_dir script status=0
+  [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe"
+  tmp_dir="$(mktemp -d)" || return 1
+  script="$tmp_dir/recipe.sh"
+  recipe_body_to_script "$recipe" "$script"
+  (
+    cd "$work_dir"
+    export OCP_TARGET="$target"
+    export OCP_PROFILE="$profile"
+    export OPENCODE_CONFIG_DIR="$config_dir"
+    bash "$script"
+  ) || status=$?
+  rm -rf "$tmp_dir"
+  return "$status"
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
