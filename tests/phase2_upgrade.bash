@@ -6,7 +6,6 @@ OCP="$ROOT/bin/ocp"
 
 fail() { echo "test failure: $*" >&2; exit 1; }
 assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
-assert_not_exists() { [[ ! -e "$1" ]] || fail "expected path to be absent: $1"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -78,7 +77,9 @@ if "$OCP" upgrade -g >/dev/null 2>&1; then
   fail "global recipe with rewrite-paths=true unexpectedly passed"
 fi
 
-"$OCP" capture alpha -- true > "$tmp/capture-output"
-assert_file_contains "$tmp/capture-output" "deprecated"
+if command -v rsync >/dev/null 2>&1; then
+  "$OCP" capture alpha -- true > "$tmp/capture-output"
+  assert_file_contains "$tmp/capture-output" "deprecated"
+fi
 
 echo "phase2 upgrade tests passed"
