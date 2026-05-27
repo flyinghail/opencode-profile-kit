@@ -1595,6 +1595,7 @@ format_version="1"
 kind="$kind"
 profiles="$profiles"
 global="$global"
+source_home="$HOME"
 created_at="$(now_utc)"
 META
 }
@@ -1668,28 +1669,37 @@ confirm_import_conflict() {
 }
 
 import_target_from_archive_path() {
-  local archived="$1" suffix=""
+  local archived="$1" source_home="${2:-}" suffix=""
 
-  case "$archived" in
-    */.config/*) suffix="/.config/${archived#*/.config/}" ;;
-    */.local/*) suffix="/.local/${archived#*/.local/}" ;;
-    */.cache/*) suffix="/.cache/${archived#*/.cache/}" ;;
-    */.opencode-profiles/*) suffix="/.opencode-profiles/${archived#*/.opencode-profiles/}" ;;
-    *) suffix="/$(basename "$archived")" ;;
-  esac
+  if [[ -n "$source_home" ]]; then
+    case "$archived" in
+      "$source_home") suffix="" ;;
+      "$source_home"/*) suffix="/${archived#"$source_home/"}" ;;
+    esac
+  fi
+
+  if [[ -z "$suffix" ]]; then
+    case "$archived" in
+      */.config/*) suffix="/.config/${archived#*/.config/}" ;;
+      */.local/*) suffix="/.local/${archived#*/.local/}" ;;
+      */.cache/*) suffix="/.cache/${archived#*/.cache/}" ;;
+      */.opencode-profiles/*) suffix="/.opencode-profiles/${archived#*/.opencode-profiles/}" ;;
+      *) suffix="/$(basename "$archived")" ;;
+    esac
+  fi
 
   printf '%s%s\n' "$HOME" "$suffix"
 }
 
 restore_external_paths() {
-  local src_root="$1" manifest="${2:-}" force="$3" skip_existing="$4" yes="$5"
+  local src_root="$1" manifest="${2:-}" force="$3" skip_existing="$4" yes="$5" source_home="${6:-}"
   local target_file archived target src entry_count basename status=0
   [[ -d "$src_root" ]] || return 0
 
   for target_file in "$src_root"/*.target; do
     [[ -f "$target_file" ]] || continue
     archived="$(cat "$target_file")"
-    target="$(import_target_from_archive_path "$archived")"
+    target="$(import_target_from_archive_path "$archived" "$source_home")"
     src="${target_file%.target}"
 
     confirm_import_conflict "$target" "$force" "$skip_existing" "$yes" || status=$?
@@ -1718,7 +1728,7 @@ restore_external_paths() {
 }
 
 import_profile_from_stage() {
-  local stage="$1" profile="$2" force="$3" skip_existing="$4" yes="$5"
+  local stage="$1" profile="$2" force="$3" skip_existing="$4" yes="$5" source_home="${6:-}"
   local profiles_dir dst manifest created_at status=0
   ensure_profile_name "$profile"
   profiles_dir="$(resolve_profiles_dir)"
@@ -1733,13 +1743,13 @@ import_profile_from_stage() {
   rm -rf "$dst"
   copy_runtime_filtered "$stage/profiles/$profile" "$dst"
   manifest="$(manifest_path "$dst")"
-  restore_external_paths "$stage/external/$profile" "$manifest" "$force" "$skip_existing" "$yes"
+  restore_external_paths "$stage/external/$profile" "$manifest" "$force" "$skip_existing" "$yes" "$source_home"
   created_at="$(awk -F '\t' -v p="$profile" '$1 == p { print $3; exit }' "$stage/state/profiles.tsv" 2>/dev/null || true)"
   register_profile "$profile" "$dst" "$created_at"
 }
 
 import_global_from_stage() {
-  local stage="$1" force="$2" skip_existing="$3" yes="$4" status=0
+  local stage="$1" force="$2" skip_existing="$3" yes="$4" source_home="${5:-}" status=0
   confirm_import_conflict "$OC_GLOBAL_DIR" "$force" "$skip_existing" "$yes" || status=$?
   if [[ "$status" == "2" ]]; then
     return 0
@@ -1752,15 +1762,15 @@ import_global_from_stage() {
   mkdir -p "$GLOBAL_META_DIR"
   [[ -f "$stage/global/.ocp-global.json" ]] && cp "$stage/global/.ocp-global.json" "$GLOBAL_MANIFEST"
   [[ -f "$stage/global/.ocp-recipes" ]] && cp "$stage/global/.ocp-recipes" "$GLOBAL_RECIPE"
-  restore_external_paths "$stage/external/global" "$GLOBAL_MANIFEST" "$force" "$skip_existing" "$yes"
+  restore_external_paths "$stage/external/global" "$GLOBAL_MANIFEST" "$force" "$skip_existing" "$yes" "$source_home"
 }
 
 import_profiles_from_stage() {
-  local stage="$1" force="$2" skip_existing="$3" yes="$4" profile
+  local stage="$1" force="$2" skip_existing="$3" yes="$4" source_home="${5:-}" profile
   [[ -d "$stage/profiles" ]] || fail "archive missing profiles directory"
   while IFS= read -r profile; do
     [[ -n "$profile" ]] || continue
-    import_profile_from_stage "$stage" "$profile" "$force" "$skip_existing" "$yes"
+    import_profile_from_stage "$stage" "$profile" "$force" "$skip_existing" "$yes" "$source_home"
   done < <(find "$stage/profiles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 }
 
@@ -1906,7 +1916,7 @@ cmd_export() {
 }
 
 cmd_import() {
-  local force=0 skip_existing=0 yes=0 file="" stage metadata format_version kind profile global_value status=0
+  local force=0 skip_existing=0 yes=0 file="" stage metadata format_version kind profile global_value source_home status=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -f|--force) force=1; shift ;;
@@ -1947,22 +1957,23 @@ cmd_import() {
   format_version="$(archive_metadata_value "$metadata" format_version)"
   kind="$(archive_metadata_value "$metadata" kind)"
   global_value="$(archive_metadata_value "$metadata" global)"
+  source_home="$(archive_metadata_value "$metadata" source_home)"
   [[ "$format_version" == "1" ]] || fail "unsupported archive format_version: $format_version"
 
   case "$kind" in
     profile)
-      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes" "$source_home"
       ;;
     all|profiles|profiles_with_global|all-with-global)
-      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes" "$source_home"
       if [[ "$kind" == "profiles_with_global" || "$kind" == "all-with-global" || "$global_value" == "1" ]]; then
         [[ -d "$stage/global" ]] || fail "archive missing global directory"
-        import_global_from_stage "$stage" "$force" "$skip_existing" "$yes"
+        import_global_from_stage "$stage" "$force" "$skip_existing" "$yes" "$source_home"
       fi
       ;;
     global)
       [[ -d "$stage/global" ]] || fail "archive missing global directory"
-      import_global_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      import_global_from_stage "$stage" "$force" "$skip_existing" "$yes" "$source_home"
       ;;
     *) fail "unsupported archive kind: $kind" ;;
   esac
