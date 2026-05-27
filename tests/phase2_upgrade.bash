@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OCP="$ROOT/bin/ocp"
+
+fail() { echo "test failure: $*" >&2; exit 1; }
+assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
+assert_not_exists() { [[ ! -e "$1" ]] || fail "expected path to be absent: $1"; }
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+export HOME="$tmp/home"
+export XDG_CONFIG_HOME="$tmp/config"
+export XDG_DATA_HOME="$tmp/data"
+export OC_BIN_DIR="$tmp/bin"
+export EDITOR=true
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OC_BIN_DIR"
+
+"$OCP" new alpha >/dev/null
+alpha_dir="$HOME/.opencode-profiles/alpha"
+
+cat > "$alpha_dir/.ocp-recipes" <<'SCRIPT'
+rewrite-paths=false
+printf '%s\n' "$OCP_PROFILE" > profile-name.txt
+printf '%s\n' "$OPENCODE_CONFIG_DIR" > config-dir.txt
+printf '%s\n' "$PWD" > cwd.txt
+SCRIPT
+
+"$OCP" upgrade alpha
+assert_file_contains "$alpha_dir/profile-name.txt" "alpha"
+assert_file_contains "$alpha_dir/config-dir.txt" "$alpha_dir"
+assert_file_contains "$alpha_dir/cwd.txt" "$alpha_dir"
+
+cat > "$alpha_dir/.ocp-recipes" <<'SCRIPT'
+rewrite-paths=true
+mkdir -p agents
+printf '%s\n' "$HOME/.config/opencode/agents/tool.md" > agents/tool.md
+SCRIPT
+
+"$OCP" upgrade alpha
+assert_file_contains "$alpha_dir/agents/tool.md" "$alpha_dir/agents/tool.md"
+
+cat > "$alpha_dir/.ocp-recipes" <<'SCRIPT'
+rewrite-paths=true
+false
+SCRIPT
+
+if "$OCP" upgrade alpha >/dev/null 2>&1; then
+  fail "upgrade failure script unexpectedly passed"
+fi
+
+"$OCP" upgrade show alpha > "$tmp/show-profile"
+assert_file_contains "$tmp/show-profile" "rewrite-paths=true"
+
+printf 'n\n' | "$OCP" upgrade init alpha >/dev/null
+assert_file_contains "$alpha_dir/.ocp-recipes" "rewrite-paths=true"
+
+global_recipe="$XDG_CONFIG_HOME/opencode-profile-kit/global/.ocp-recipes"
+mkdir -p "$(dirname "$global_recipe")"
+cat > "$global_recipe" <<'SCRIPT'
+printf '%s\n' "$OCP_TARGET" > target.txt
+printf '%s\n' "$OPENCODE_CONFIG_DIR" > config-dir.txt
+SCRIPT
+
+"$OCP" upgrade -g
+global_dir="$HOME/.config/opencode"
+assert_file_contains "$global_dir/target.txt" "global"
+assert_file_contains "$global_dir/config-dir.txt" "$global_dir"
+
+cat > "$global_recipe" <<'SCRIPT'
+rewrite-paths=true
+echo bad
+SCRIPT
+
+if "$OCP" upgrade -g >/dev/null 2>&1; then
+  fail "global recipe with rewrite-paths=true unexpectedly passed"
+fi
+
+"$OCP" capture alpha -- true > "$tmp/capture-output"
+assert_file_contains "$tmp/capture-output" "deprecated"
+
+echo "phase2 upgrade tests passed"
