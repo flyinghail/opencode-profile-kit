@@ -1691,6 +1691,14 @@ import_target_from_archive_path() {
   printf '%s%s\n' "$HOME" "$suffix"
 }
 
+rebase_external_manifest_entry() {
+  local manifest="$1" archived="$2" target="$3"
+  [[ -n "$manifest" && -f "$manifest" ]] || return 0
+
+  manifest_external_remove "$manifest" "$archived"
+  manifest_external_add "$manifest" "$target"
+}
+
 restore_external_paths() {
   local src_root="$1" manifest="${2:-}" force="$3" skip_existing="$4" yes="$5" source_home="${6:-}"
   local target_file archived target src entry_count basename status=0
@@ -1704,6 +1712,7 @@ restore_external_paths() {
 
     confirm_import_conflict "$target" "$force" "$skip_existing" "$yes" || status=$?
     if [[ "$status" == "2" ]]; then
+      rebase_external_manifest_entry "$manifest" "$archived" "$target"
       status=0
       continue
     fi
@@ -1720,10 +1729,7 @@ restore_external_paths() {
       copy_runtime_filtered "$src" "$target"
     fi
 
-    if [[ -n "$manifest" && -f "$manifest" ]]; then
-      manifest_external_remove "$manifest" "$archived"
-      manifest_external_add "$manifest" "$target"
-    fi
+    rebase_external_manifest_entry "$manifest" "$archived" "$target"
   done
 }
 

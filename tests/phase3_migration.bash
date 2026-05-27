@@ -6,6 +6,7 @@ OCP="$ROOT/bin/ocp"
 
 fail() { echo "test failure: $*" >&2; exit 1; }
 assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
+assert_file_not_contains() { ! grep -Fq "$2" "$1" || fail "expected $1 not to contain: $2"; }
 assert_tar_contains() { tar -tzf "$1" | grep -Fxq "$2" || fail "expected archive $1 to contain: $2"; }
 
 tmp="$(mktemp -d)"
@@ -93,5 +94,21 @@ assert_file_contains "$import_all_home/.config/opencode/opencode.json" "global c
 assert_file_contains "$import_all_home/.local/share/alpha-extra/data.txt" "extra"
 assert_file_contains "$import_all_home/tools/nested-extra/data.txt" "nested extra"
 assert_file_contains "$import_all_home/.local/share/global-extra/data.txt" "global extra"
+
+import_skip_home="$tmp/import-skip-home"
+mkdir -p "$import_skip_home/.local/share/alpha-extra" "$import_skip_home/.local/share/global-extra"
+printf 'existing alpha external\n' > "$import_skip_home/.local/share/alpha-extra/data.txt"
+printf 'existing global external\n' > "$import_skip_home/.local/share/global-extra/data.txt"
+HOME="$import_skip_home" XDG_CONFIG_HOME="$tmp/import-skip-config" XDG_DATA_HOME="$tmp/import-skip-data" OC_BIN_DIR="$tmp/import-skip-bin" "$OCP" import --skip-existing "$profile_archive"
+assert_file_contains "$import_skip_home/.local/share/alpha-extra/data.txt" "existing alpha external"
+HOME="$import_skip_home" XDG_CONFIG_HOME="$tmp/import-skip-config" XDG_DATA_HOME="$tmp/import-skip-data" OC_BIN_DIR="$tmp/import-skip-bin" "$OCP" external list alpha > "$tmp/import-skip-profile-external-list"
+assert_file_contains "$tmp/import-skip-profile-external-list" "$import_skip_home/.local/share/alpha-extra"
+assert_file_not_contains "$tmp/import-skip-profile-external-list" "$HOME/.local/share/alpha-extra"
+
+HOME="$import_skip_home" XDG_CONFIG_HOME="$tmp/import-skip-config" XDG_DATA_HOME="$tmp/import-skip-data" OC_BIN_DIR="$tmp/import-skip-bin" "$OCP" import --skip-existing "$global_archive"
+assert_file_contains "$import_skip_home/.local/share/global-extra/data.txt" "existing global external"
+HOME="$import_skip_home" XDG_CONFIG_HOME="$tmp/import-skip-config" XDG_DATA_HOME="$tmp/import-skip-data" OC_BIN_DIR="$tmp/import-skip-bin" "$OCP" external list -g > "$tmp/import-skip-global-external-list"
+assert_file_contains "$tmp/import-skip-global-external-list" "$import_skip_home/.local/share/global-extra"
+assert_file_not_contains "$tmp/import-skip-global-external-list" "$HOME/.local/share/global-extra"
 
 echo "phase3 migration tests passed"
