@@ -1059,7 +1059,7 @@ cmd_upgrade_edit_global() {
 
 cmd_upgrade_init_write() {
   local recipe="$1" force="$2" global="$3" rewrite="false" command
-  if [[ -e "$recipe" && "$force" != "1" ]]; then
+  if [[ ( -e "$recipe" || -L "$recipe" ) && "$force" != "1" ]]; then
     fail "recipe already exists: $recipe; use --force"
   fi
   mkdir -p "$(dirname "$recipe")"
