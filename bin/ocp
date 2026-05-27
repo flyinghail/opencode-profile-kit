@@ -62,6 +62,11 @@ Usage:
   ocp upgrade show <profile>                  Show a profile upgrade recipe
   ocp upgrade show -g                         Show the global upgrade recipe
 
+  ocp external add <profile> <path>            Track an external HOME path for migration
+  ocp external list <profile>                  List external migration paths
+  ocp external remove <profile> <path>         Stop tracking an external HOME path
+  ocp external add|list|remove -g [path]       Manage global external migration paths
+
   ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
   ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
   ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
@@ -1448,6 +1453,42 @@ cmd_upgrade() {
   esac
 }
 
+resolve_home_external_path() {
+  local path resolved
+  resolved="$(expand_home_path "$1")"
+  case "$resolved" in "$HOME"/*) printf '%s\n' "$resolved" ;; *) fail "external path must be under HOME: $1" ;; esac
+}
+
+external_manifest_for_target() {
+  local global="$1" profile="$2" dir
+  if [[ "$global" == "1" ]]; then
+    ensure_global_manifest
+    global_manifest_path
+  else
+    dir="$(require_profile_path "$profile")"
+    write_manifest "$dir" "$profile" "" 0
+    manifest_path "$dir"
+  fi
+}
+
+cmd_external() {
+  local sub="${1:-}" global=0 profile="" path="" manifest resolved
+  shift || true
+  [[ "$sub" == "add" || "$sub" == "list" || "$sub" == "remove" ]] || fail "usage: ocp external add|list|remove ..."
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -g|--global) global=1; shift ;;
+      *) if [[ -z "$profile" && "$global" != "1" ]]; then profile="$1"; else path="$1"; fi; shift ;;
+    esac
+  done
+  manifest="$(external_manifest_for_target "$global" "$profile")"
+  case "$sub" in
+    list) manifest_external_list "$manifest" ;;
+    add) [[ -n "$path" ]] || fail "path is required"; resolved="$(resolve_home_external_path "$path")"; manifest_external_add "$manifest" "$resolved"; echo "added external: $resolved" ;;
+    remove) [[ -n "$path" ]] || fail "path is required"; resolved="$(resolve_home_external_path "$path")"; manifest_external_remove "$manifest" "$resolved"; echo "removed external: $resolved" ;;
+  esac
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
@@ -1543,7 +1584,7 @@ ___CLI___completion() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   cmd="${COMP_WORDS[1]}"
 
-  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade capture rewrite-paths list path refresh doctor completion config help"
+  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external capture rewrite-paths list path refresh doctor completion config help"
 
   case "$COMP_CWORD" in
     1)
@@ -1556,6 +1597,10 @@ ___CLI___completion() {
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+          return 0
+          ;;
+        external)
+          COMPREPLY=( $(compgen -W "add list remove -g --global" -- "$cur") )
           return 0
           ;;
         bin)
@@ -1625,6 +1670,12 @@ ___CLI___completion() {
               return 0
               ;;
           esac
+          ;;
+        external)
+          local profiles
+          profiles="$(__CLI__ list 2>/dev/null)"
+          COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
+          return 0
           ;;
       esac
       ;;
@@ -1697,6 +1748,7 @@ ___CLI__() {
     'link-all:Symlink global config path into all profiles'
     'bin:Create a profile launcher command'
     'upgrade:Run upgrade recipes'
+    'external:Manage external migration paths'
     'capture:Capture changes from a global-path installer'
     'rewrite-paths:Rewrite hardcoded OpenCode paths in markdown files'
     'list:List profiles'
@@ -1719,6 +1771,16 @@ ___CLI__() {
   case "$words[2]" in
     run|shell|exec|env|link|capture|rewrite-paths|path|rename|remove|doctor)
       if (( CURRENT == 3 )); then
+        _describe 'profile' profiles
+        return
+      fi
+      ;;
+    external)
+      if (( CURRENT == 3 )); then
+        _values 'external subcommand' add list remove '-g' '--global'
+        return
+      elif (( CURRENT == 4 )); then
+        _values 'external option' '-g' '--global'
         _describe 'profile' profiles
         return
       fi
@@ -2023,6 +2085,7 @@ main() {
     link-all) cmd_link_all "$@" ;;
     bin) cmd_bin "$@" ;;
     upgrade) cmd_upgrade "$@" ;;
+    external) cmd_external "$@" ;;
     capture) cmd_capture "${1:-}" "${@:2}" ;;
     rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
     list) cmd_list "$@" ;;
