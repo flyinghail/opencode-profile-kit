@@ -53,8 +53,8 @@ Usage:
   ocp bin remove <command-name>               Remove a launcher command
   ocp bin repair <command-name|--all>         Regenerate launcher commands
 
-  ocp capture <profile> -- <command...>       Capture global installer changes into a profile
-  ocp capture <profile> --stdin               Capture stdin script global config changes
+  ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
+  ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
   ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
 
   ocp list                                    List profiles
@@ -1138,6 +1138,9 @@ cmd_capture() {
       fail "usage: ocp capture <profile> -- <command...> OR ocp capture <profile> --stdin"
       ;;
   esac
+
+  echo "warning: ocp capture is deprecated; prefer ocp upgrade scripts with precise backup/copy/restore logic" >&2
+  echo "warning: capture may copy global opencode.json into a profile and override profile config" >&2
 
   require_rsync
 

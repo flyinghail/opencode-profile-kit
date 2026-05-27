@@ -83,7 +83,7 @@ if "$OCP" upgrade -g >/dev/null 2>&1; then
 fi
 
 if command -v rsync >/dev/null 2>&1; then
-  "$OCP" capture alpha -- true > "$tmp/capture-output"
+  "$OCP" capture alpha -- true > "$tmp/capture-output" 2>&1
   assert_file_contains "$tmp/capture-output" "deprecated"
 fi
 

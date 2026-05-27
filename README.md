@@ -249,6 +249,8 @@ This uses `eval` because a child process cannot modify the environment of its pa
 
 ## Capturing Global Installers
 
+`ocp capture` is deprecated. It remains available for users who know exactly what it does, but new workflows should prefer `ocp upgrade` scripts with explicit backup, install, selective copy, and restore commands. `capture` syncs the changed `~/.config/opencode` tree into a profile, so a changed global `opencode.json` can be copied into the profile and override profile-specific configuration.
+
 Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
 
 ```text
