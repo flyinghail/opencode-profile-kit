@@ -992,6 +992,84 @@ run_recipe_script() {
   return "$status"
 }
 
+cmd_upgrade_run_profile() {
+  local profile="$1" dir recipe
+  dir="$(require_profile_path "$profile")"
+  recipe="$(recipe_path_for_profile_dir "$dir")"
+  [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init $profile"
+  run_recipe_script "profile" "$profile" "$dir" "$dir" "$recipe"
+  if recipe_rewrite_paths_enabled "$recipe"; then
+    cmd_rewrite_paths "$profile"
+  fi
+}
+
+cmd_upgrade_run_global() {
+  local recipe global_dir
+  ensure_global_dirs
+  recipe="$(recipe_path_for_global)"
+  global_dir="$(global_config_dir)"
+  [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init -g"
+  recipe_rewrite_paths_enabled "$recipe" && fail "rewrite-paths=true is invalid for global recipes"
+  run_recipe_script "global" "" "$global_dir" "$global_dir" "$recipe"
+}
+
+cmd_upgrade_show_profile() {
+  local dir recipe
+  dir="$(require_profile_path "$1")"
+  recipe="$(recipe_path_for_profile_dir "$dir")"
+  [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe"
+  cat "$recipe"
+}
+
+cmd_upgrade_show_global() {
+  local recipe
+  ensure_global_dirs
+  recipe="$(recipe_path_for_global)"
+  [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe"
+  cat "$recipe"
+}
+
+cmd_upgrade_edit_profile() {
+  local dir recipe editor
+  dir="$(require_profile_path "$1")"
+  recipe="$(recipe_path_for_profile_dir "$dir")"
+  [[ -f "$recipe" ]] || printf 'rewrite-paths=false\n\n' > "$recipe"
+  editor="${EDITOR:-vi}"
+  "$editor" "$recipe"
+}
+
+cmd_upgrade_edit_global() {
+  local recipe editor
+  ensure_global_dirs
+  recipe="$(recipe_path_for_global)"
+  [[ -f "$recipe" ]] || printf '\n' > "$recipe"
+  editor="${EDITOR:-vi}"
+  "$editor" "$recipe"
+}
+
+cmd_upgrade() {
+  local sub="${1:-}" global=0 force=0 profile=""
+  case "$sub" in init|edit|show) shift ;; *) sub="run" ;;
+  esac
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -g|--global) global=1; shift ;;
+      -f|--force) force=1; shift ;;
+      *) [[ -z "$profile" ]] || fail "usage: ocp upgrade [init|edit|show] [-g|--global] [profile]"; profile="$1"; shift ;;
+    esac
+  done
+  if [[ "$global" == "1" && -n "$profile" ]]; then fail "profile cannot be combined with --global"; fi
+  case "$sub:$global" in
+    run:1) cmd_upgrade_run_global ;;
+    run:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_run_profile "$profile" ;;
+    show:1) cmd_upgrade_show_global ;;
+    show:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_show_profile "$profile" ;;
+    edit:1) cmd_upgrade_edit_global ;;
+    edit:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_edit_profile "$profile" ;;
+    init:*) cmd_upgrade_init_dispatch "$global" "$force" "$profile" ;;
+  esac
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
@@ -1513,6 +1591,7 @@ main() {
     link) cmd_link "$@" ;;
     link-all) cmd_link_all "$@" ;;
     bin) cmd_bin "$@" ;;
+    upgrade) cmd_upgrade "$@" ;;
     capture) cmd_capture "${1:-}" "${@:2}" ;;
     rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
     list) cmd_list "$@" ;;
