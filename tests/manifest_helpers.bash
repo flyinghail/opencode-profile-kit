@@ -130,6 +130,31 @@ assert_external_list_count "$tmp/nested-external-removed-list" 0
 assert_list_not_contains "$tmp/nested-external-removed-list" "/tmp/nested-external"
 assert_file_contains "$nested_external_manifest" '"other":{"external":[{"path":"/tmp/nested-external","mode":"copy"}],"path":"/tmp/nested-path"}'
 
+nested_entry_manifest="$tmp/nested-entry.json"
+printf '%s\n' '{"name":"nested-entry","external":[{"path":"/tmp/direct","metadata":{"path":"/tmp/nested-metadata","external":[{"path":"/tmp/nested-external"}]}}]}' > "$nested_entry_manifest"
+manifest_external_list "$nested_entry_manifest" > "$tmp/nested-entry-list"
+assert_external_list_count "$tmp/nested-entry-list" 1
+assert_list_contains "$tmp/nested-entry-list" "/tmp/direct"
+assert_list_not_contains "$tmp/nested-entry-list" "/tmp/nested-metadata"
+assert_list_not_contains "$tmp/nested-entry-list" "/tmp/nested-external"
+
+manifest_external_add "$nested_entry_manifest" "/tmp/added"
+validate_manifest "$nested_entry_manifest"
+manifest_external_list "$nested_entry_manifest" > "$tmp/nested-entry-added-list"
+assert_external_list_count "$tmp/nested-entry-added-list" 2
+assert_list_contains "$tmp/nested-entry-added-list" "/tmp/direct"
+assert_list_contains "$tmp/nested-entry-added-list" "/tmp/added"
+assert_list_not_contains "$tmp/nested-entry-added-list" "/tmp/nested-metadata"
+assert_list_not_contains "$tmp/nested-entry-added-list" "/tmp/nested-external"
+
+manifest_external_remove "$nested_entry_manifest" "/tmp/added"
+validate_manifest "$nested_entry_manifest"
+manifest_external_list "$nested_entry_manifest" > "$tmp/nested-entry-removed-list"
+assert_external_list_count "$tmp/nested-entry-removed-list" 1
+assert_list_contains "$tmp/nested-entry-removed-list" "/tmp/direct"
+assert_list_not_contains "$tmp/nested-entry-removed-list" "/tmp/nested-metadata"
+assert_list_not_contains "$tmp/nested-entry-removed-list" "/tmp/nested-external"
+
 escaped_manifest="$tmp/escaped.json"
 printf '{"name":"escaped","external":[]}\n' > "$escaped_manifest"
 escaped_path='/tmp/path with "quote" and \backslash'
