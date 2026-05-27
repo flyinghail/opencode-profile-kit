@@ -993,12 +993,15 @@ run_recipe_script() {
 }
 
 cmd_upgrade_run_profile() {
-  local profile="$1" dir recipe
+  local profile="$1" dir recipe rewrite_paths=0
   dir="$(require_profile_path "$profile")"
   recipe="$(recipe_path_for_profile_dir "$dir")"
   [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init $profile"
-  run_recipe_script "profile" "$profile" "$dir" "$dir" "$recipe"
   if recipe_rewrite_paths_enabled "$recipe"; then
+    rewrite_paths=1
+  fi
+  run_recipe_script "profile" "$profile" "$dir" "$dir" "$recipe"
+  if [[ "$rewrite_paths" == "1" ]]; then
     cmd_rewrite_paths "$profile"
   fi
 }
@@ -1045,6 +1048,10 @@ cmd_upgrade_edit_global() {
   [[ -f "$recipe" ]] || printf '\n' > "$recipe"
   editor="${EDITOR:-vi}"
   "$editor" "$recipe"
+}
+
+cmd_upgrade_init_dispatch() {
+  fail "upgrade init is not implemented yet"
 }
 
 cmd_upgrade() {
