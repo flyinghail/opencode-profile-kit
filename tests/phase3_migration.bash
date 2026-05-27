@@ -6,7 +6,7 @@ OCP="$ROOT/bin/ocp"
 
 fail() { echo "test failure: $*" >&2; exit 1; }
 assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"; }
-assert_tar_contains() { tar -tzf "$1" | grep -Fq "$2" || fail "expected archive $1 to contain: $2"; }
+assert_tar_contains() { tar -tzf "$1" | grep -Fxq "$2" || fail "expected archive $1 to contain: $2"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -16,6 +16,8 @@ export XDG_CONFIG_HOME="$tmp/config"
 export XDG_DATA_HOME="$tmp/data"
 export OC_BIN_DIR="$tmp/bin"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OC_BIN_DIR"
+archives_dir="$tmp/archives"
+mkdir -p "$archives_dir"
 
 "$OCP" new alpha >/dev/null
 alpha_dir="$HOME/.opencode-profiles/alpha"
@@ -28,8 +30,11 @@ printf 'extra\n' > "$HOME/.local/share/alpha-extra/data.txt"
 "$OCP" external list alpha > "$tmp/external-list"
 assert_file_contains "$tmp/external-list" "$HOME/.local/share/alpha-extra"
 
-"$OCP" export alpha
-profile_archive="alpha.ocp-profile.tar.gz"
+(
+  cd "$archives_dir"
+  "$OCP" export alpha
+)
+profile_archive="$archives_dir/alpha.ocp-profile.tar.gz"
 [[ -f "$profile_archive" ]] || fail "profile archive missing"
 assert_tar_contains "$profile_archive" "metadata.env"
 assert_tar_contains "$profile_archive" "profiles/alpha/opencode.json"
@@ -44,16 +49,22 @@ mkdir -p "$HOME/.local/share/global-extra"
 printf 'global extra\n' > "$HOME/.local/share/global-extra/data.txt"
 "$OCP" external add -g "$HOME/.local/share/global-extra"
 
-"$OCP" export -g
-global_archive="global.ocp-global.tar.gz"
+(
+  cd "$archives_dir"
+  "$OCP" export -g
+)
+global_archive="$archives_dir/global.ocp-global.tar.gz"
 [[ -f "$global_archive" ]] || fail "global archive missing"
 assert_tar_contains "$global_archive" "global/config/opencode.json"
 assert_tar_contains "$global_archive" "global/.ocp-recipes"
 assert_tar_contains "$global_archive" "global/.ocp-global.json"
 assert_tar_contains "$global_archive" "external/global/0/data.txt"
 
-"$OCP" export -a -g
-all_archive="all-with-global.ocp.tar.gz"
+(
+  cd "$archives_dir"
+  "$OCP" export -a -g
+)
+all_archive="$archives_dir/all-with-global.ocp.tar.gz"
 [[ -f "$all_archive" ]] || fail "all-with-global archive missing"
 assert_tar_contains "$all_archive" "profiles/alpha/opencode.json"
 assert_tar_contains "$all_archive" "global/config/opencode.json"
