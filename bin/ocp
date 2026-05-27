@@ -1959,6 +1959,11 @@ cmd_export() {
   if [[ -n "$file" && "$file" != *.tar.gz ]]; then
     fail "archive must end with .tar.gz: $file"
   fi
+  if [[ "$all" == "1" ]]; then
+    profile_list="$(profile_export_names)"
+    [[ -n "$profile_list" ]] || fail "no profiles to export"
+    profiles="${profile_list//$'\n'/ }"
+  fi
 
   if [[ -z "$file" ]]; then
     if [[ "$all" == "1" && "$global" == "1" ]]; then
@@ -1980,8 +1985,6 @@ cmd_export() {
   trap '[[ -z "${OCP_EXPORT_STAGE_CLEANUP:-}" ]] || rm -rf "$OCP_EXPORT_STAGE_CLEANUP"' EXIT
 
   if [[ "$all" == "1" ]]; then
-    profile_list="$(profile_export_names)"
-    profiles="${profile_list//$'\n'/ }"
     while IFS= read -r profile; do
       [[ -n "$profile" ]] || continue
       stage_profile_export "$profile" "$stage"

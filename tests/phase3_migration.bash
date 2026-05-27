@@ -22,6 +22,26 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OC_BIN_DIR"
 archives_dir="$tmp/archives"
 mkdir -p "$archives_dir"
 
+empty_all_archive="$archives_dir/empty-all.ocp.tar.gz"
+if "$OCP" export -a "$empty_all_archive" > "$tmp/empty-all.out" 2> "$tmp/empty-all.err"; then
+  fail "expected empty all-profiles export to fail"
+fi
+assert_file_contains "$tmp/empty-all.err" "no profiles to export"
+assert_file_missing "$empty_all_archive"
+
+empty_all_global_archive="$archives_dir/empty-all-with-global.ocp.tar.gz"
+if "$OCP" export -a -g "$empty_all_global_archive" > "$tmp/empty-all-global.out" 2> "$tmp/empty-all-global.err"; then
+  fail "expected empty all-profiles with global export to fail"
+fi
+assert_file_contains "$tmp/empty-all-global.err" "no profiles to export"
+assert_file_missing "$empty_all_global_archive"
+
+empty_global_archive="$archives_dir/empty-global.ocp-global.tar.gz"
+"$OCP" export -g "$empty_global_archive" >/dev/null
+[[ -f "$empty_global_archive" ]] || fail "empty global archive missing"
+assert_tar_contains "$empty_global_archive" "global/config/"
+assert_tar_contains "$empty_global_archive" "global/.ocp-global.json"
+
 "$OCP" new alpha >/dev/null
 alpha_dir="$HOME/.opencode-profiles/alpha"
 printf 'profile config\n' > "$alpha_dir/opencode.json"
