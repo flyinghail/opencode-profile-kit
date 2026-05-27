@@ -1597,6 +1597,12 @@ META
 copy_runtime_filtered() {
   local src="$1" dst="$2"
   mkdir -p "$dst"
+
+  if [[ -f "$src" ]]; then
+    cp -p "$src" "$dst/$(basename "$src")"
+    return
+  fi
+
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --exclude session --exclude tmp --exclude logs --exclude semantic --exclude index --exclude cache --exclude .cache "$src/" "$dst/"
   else
