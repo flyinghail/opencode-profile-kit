@@ -113,6 +113,23 @@ assert_external_list_count "$tmp/unrelated-path-removed-list" 0
 assert_list_not_contains "$tmp/unrelated-path-removed-list" "/tmp/not-external"
 assert_file_contains "$unrelated_path_manifest" '"other":{"path":"/tmp/not-external"}'
 
+nested_external_manifest="$tmp/nested-external.json"
+printf '%s\n' '{"name":"nested","other":{"external":[{"path":"/tmp/nested-external","mode":"copy"}],"path":"/tmp/nested-path"},"external":[]}' > "$nested_external_manifest"
+manifest_external_add "$nested_external_manifest" "/tmp/top-external"
+validate_manifest "$nested_external_manifest"
+manifest_external_list "$nested_external_manifest" > "$tmp/nested-external-added-list"
+assert_external_list_count "$tmp/nested-external-added-list" 1
+assert_list_contains "$tmp/nested-external-added-list" "/tmp/top-external"
+assert_list_not_contains "$tmp/nested-external-added-list" "/tmp/nested-external"
+assert_file_contains "$nested_external_manifest" '"other":{"external":[{"path":"/tmp/nested-external","mode":"copy"}],"path":"/tmp/nested-path"}'
+
+manifest_external_remove "$nested_external_manifest" "/tmp/top-external"
+validate_manifest "$nested_external_manifest"
+manifest_external_list "$nested_external_manifest" > "$tmp/nested-external-removed-list"
+assert_external_list_count "$tmp/nested-external-removed-list" 0
+assert_list_not_contains "$tmp/nested-external-removed-list" "/tmp/nested-external"
+assert_file_contains "$nested_external_manifest" '"other":{"external":[{"path":"/tmp/nested-external","mode":"copy"}],"path":"/tmp/nested-path"}'
+
 escaped_manifest="$tmp/escaped.json"
 printf '{"name":"escaped","external":[]}\n' > "$escaped_manifest"
 escaped_path='/tmp/path with "quote" and \backslash'
