@@ -195,7 +195,7 @@ npx some-package install
 SCRIPT
 ```
 
-For installers that write to `~/.config/opencode`, use `capture --stdin` the same way.
+For new installers that write to `~/.config/opencode`, prefer an explicit `ocp upgrade` recipe; use deprecated `capture --stdin` only for legacy workflows.
 
 ### Rename
 
