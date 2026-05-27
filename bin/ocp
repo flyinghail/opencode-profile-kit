@@ -70,6 +70,7 @@ Usage:
   ocp export [-f|--force] <profile> [archive.tar.gz] Export a profile migration archive
   ocp export [-f|--force] -g [archive.tar.gz]  Export the global migration archive
   ocp export [-f|--force] -a [-g] [archive.tar.gz] Export all profiles, optionally with global config
+  ocp import [-f|--force|--skip-existing|-y|--yes] [archive.tar.gz] Import a migration archive
 
   ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
   ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
@@ -1637,6 +1638,132 @@ confirm_overwrite_archive() {
   [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" ]] || fail "archive exists: $file"
 }
 
+archive_metadata_value() {
+  local metadata="$1" key="$2"
+  awk -F '=' -v k="$key" '$1 == k { gsub(/^"|"$/, "", $2); print $2; exit }' "$metadata"
+}
+
+select_import_archive() {
+  local matches count choice
+  matches="$(find . -maxdepth 1 -type f \( -name '*.ocp-profile.tar.gz' -o -name '*.ocp-profiles.tar.gz' -o -name '*.ocp-global.tar.gz' -o -name '*.ocp.tar.gz' \) | sort)"
+  count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [[ "$count" != "0" ]] || fail "no .ocp archive found in current directory"
+  [[ -t 0 ]] || fail "archive file is required in non-interactive mode"
+  if [[ "$count" == "1" ]]; then printf '%s\n' "$matches"; return; fi
+  printf '%s\n' "$matches" | nl -w1 -s') ' >&2
+  printf 'archive number: ' >&2
+  IFS= read -r choice
+  printf '%s\n' "$matches" | sed -n "${choice}p"
+}
+
+confirm_import_conflict() {
+  local target="$1" force="$2" skip_existing="$3" yes="$4" answer
+  [[ ! -e "$target" ]] && return 0
+  [[ "$skip_existing" == "1" ]] && return 2
+  [[ "$force" == "1" || "$yes" == "1" ]] && return 0
+  [[ -t 0 ]] || fail "destination exists: $target; use --force or --skip-existing"
+  printf 'overwrite %s? [y/N] ' "$target" >&2
+  IFS= read -r answer
+  [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" ]] || return 2
+}
+
+import_target_from_archive_path() {
+  local archived="$1" suffix=""
+
+  case "$archived" in
+    */.config/*) suffix="/.config/${archived#*/.config/}" ;;
+    */.local/*) suffix="/.local/${archived#*/.local/}" ;;
+    */.cache/*) suffix="/.cache/${archived#*/.cache/}" ;;
+    */.opencode-profiles/*) suffix="/.opencode-profiles/${archived#*/.opencode-profiles/}" ;;
+    *) suffix="/$(basename "$archived")" ;;
+  esac
+
+  printf '%s%s\n' "$HOME" "$suffix"
+}
+
+restore_external_paths() {
+  local src_root="$1" manifest="${2:-}" force="$3" skip_existing="$4" yes="$5"
+  local target_file archived target src entry_count basename status=0
+  [[ -d "$src_root" ]] || return 0
+
+  for target_file in "$src_root"/*.target; do
+    [[ -f "$target_file" ]] || continue
+    archived="$(cat "$target_file")"
+    target="$(import_target_from_archive_path "$archived")"
+    src="${target_file%.target}"
+
+    confirm_import_conflict "$target" "$force" "$skip_existing" "$yes" || status=$?
+    if [[ "$status" == "2" ]]; then
+      status=0
+      continue
+    fi
+    status=0
+
+    rm -rf "$target"
+    mkdir -p "$(dirname "$target")"
+    basename="$(basename "$target")"
+    entry_count="$(find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "$entry_count" == "1" && -f "$src/$basename" ]]; then
+      cp -p "$src/$basename" "$target"
+    else
+      mkdir -p "$target"
+      copy_runtime_filtered "$src" "$target"
+    fi
+
+    if [[ -n "$manifest" && -f "$manifest" ]]; then
+      manifest_external_remove "$manifest" "$archived"
+      manifest_external_add "$manifest" "$target"
+    fi
+  done
+}
+
+import_profile_from_stage() {
+  local stage="$1" profile="$2" force="$3" skip_existing="$4" yes="$5"
+  local profiles_dir dst manifest created_at status=0
+  ensure_profile_name "$profile"
+  profiles_dir="$(resolve_profiles_dir)"
+  dst="$profiles_dir/$profile"
+
+  confirm_import_conflict "$dst" "$force" "$skip_existing" "$yes" || status=$?
+  if [[ "$status" == "2" ]]; then
+    return 0
+  fi
+  status=0
+
+  rm -rf "$dst"
+  copy_runtime_filtered "$stage/profiles/$profile" "$dst"
+  manifest="$(manifest_path "$dst")"
+  restore_external_paths "$stage/external/$profile" "$manifest" "$force" "$skip_existing" "$yes"
+  created_at="$(awk -F '\t' -v p="$profile" '$1 == p { print $3; exit }' "$stage/state/profiles.tsv" 2>/dev/null || true)"
+  register_profile "$profile" "$dst" "$created_at"
+}
+
+import_global_from_stage() {
+  local stage="$1" force="$2" skip_existing="$3" yes="$4" status=0
+  confirm_import_conflict "$OC_GLOBAL_DIR" "$force" "$skip_existing" "$yes" || status=$?
+  if [[ "$status" == "2" ]]; then
+    return 0
+  fi
+  status=0
+
+  ensure_global_dirs
+  rm -rf "$OC_GLOBAL_DIR"
+  copy_runtime_filtered "$stage/global/config" "$OC_GLOBAL_DIR"
+  mkdir -p "$GLOBAL_META_DIR"
+  [[ -f "$stage/global/.ocp-global.json" ]] && cp "$stage/global/.ocp-global.json" "$GLOBAL_MANIFEST"
+  [[ -f "$stage/global/.ocp-recipes" ]] && cp "$stage/global/.ocp-recipes" "$GLOBAL_RECIPE"
+  restore_external_paths "$stage/external/global" "$GLOBAL_MANIFEST" "$force" "$skip_existing" "$yes"
+}
+
+import_profiles_from_stage() {
+  local stage="$1" force="$2" skip_existing="$3" yes="$4" profile
+  [[ -d "$stage/profiles" ]] || fail "archive missing profiles directory"
+  while IFS= read -r profile; do
+    [[ -n "$profile" ]] || continue
+    import_profile_from_stage "$stage" "$profile" "$force" "$skip_existing" "$yes"
+  done < <(find "$stage/profiles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+}
+
 stage_profile_export() {
   local profile="$1" stage="$2" dir manifest
   dir="$(require_profile_path "$profile")"
@@ -1778,6 +1905,74 @@ cmd_export() {
   echo "exported: $file"
 }
 
+cmd_import() {
+  local force=0 skip_existing=0 yes=0 file="" stage metadata format_version kind profile global_value status=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force) force=1; shift ;;
+      --skip-existing) skip_existing=1; shift ;;
+      -y|--yes) yes=1; shift ;;
+      -*) fail "unknown option for import: $1" ;;
+      *)
+        [[ -z "$file" ]] || fail "usage: ocp import [-f|--force|--skip-existing|-y|--yes] [archive.tar.gz]"
+        file="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$force" == "1" && "$skip_existing" == "1" ]]; then
+    fail "--force cannot be combined with --skip-existing"
+  fi
+  if [[ -z "$file" ]]; then
+    file="$(select_import_archive)"
+    [[ -n "$file" ]] || fail "archive file is required"
+  fi
+  [[ -f "$file" ]] || fail "archive does not exist: $file"
+
+  stage="$(mktemp -d)" || return 1
+  OCP_IMPORT_STAGE_CLEANUP="$stage"
+  trap '[[ -z "${OCP_IMPORT_STAGE_CLEANUP:-}" ]] || rm -rf "$OCP_IMPORT_STAGE_CLEANUP"' EXIT
+
+  tar -xzf "$file" -C "$stage" || {
+    status=$?
+    rm -rf "$stage"
+    OCP_IMPORT_STAGE_CLEANUP=""
+    trap - EXIT
+    return "$status"
+  }
+
+  metadata="$stage/metadata.env"
+  [[ -f "$metadata" ]] || fail "archive metadata missing: metadata.env"
+  format_version="$(archive_metadata_value "$metadata" format_version)"
+  kind="$(archive_metadata_value "$metadata" kind)"
+  global_value="$(archive_metadata_value "$metadata" global)"
+  [[ "$format_version" == "1" ]] || fail "unsupported archive format_version: $format_version"
+
+  case "$kind" in
+    profile)
+      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      ;;
+    all|profiles|profiles_with_global|all-with-global)
+      import_profiles_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      if [[ "$kind" == "profiles_with_global" || "$kind" == "all-with-global" || "$global_value" == "1" ]]; then
+        [[ -d "$stage/global" ]] || fail "archive missing global directory"
+        import_global_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      fi
+      ;;
+    global)
+      [[ -d "$stage/global" ]] || fail "archive missing global directory"
+      import_global_from_stage "$stage" "$force" "$skip_existing" "$yes"
+      ;;
+    *) fail "unsupported archive kind: $kind" ;;
+  esac
+
+  rm -rf "$stage"
+  OCP_IMPORT_STAGE_CLEANUP=""
+  trap - EXIT
+  echo "imported: $file"
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
@@ -1873,7 +2068,7 @@ ___CLI___completion() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   cmd="${COMP_WORDS[1]}"
 
-  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external export capture rewrite-paths list path refresh doctor completion config help"
+  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external export import capture rewrite-paths list path refresh doctor completion config help"
 
   case "$COMP_CWORD" in
     1)
@@ -1896,6 +2091,11 @@ ___CLI___completion() {
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "-a --all -g --global -f --force $profiles" -- "$cur") )
+          return 0
+          ;;
+        import)
+          COMPREPLY=( $(compgen -W "-f --force --skip-existing -y --yes" -- "$cur") )
+          COMPREPLY+=( $(compgen -f -- "$cur") )
           return 0
           ;;
         bin)
@@ -1974,6 +2174,11 @@ ___CLI___completion() {
           ;;
         export)
           COMPREPLY=( $(compgen -W "-a --all -g --global -f --force" -- "$cur") )
+          COMPREPLY+=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        import)
+          COMPREPLY=( $(compgen -W "-f --force --skip-existing -y --yes" -- "$cur") )
           COMPREPLY+=( $(compgen -f -- "$cur") )
           return 0
           ;;
@@ -2058,6 +2263,7 @@ ___CLI__() {
     'upgrade:Run upgrade recipes'
     'external:Manage external migration paths'
     'export:Export migration archives'
+    'import:Import migration archives'
     'capture:Capture changes from a global-path installer'
     'rewrite-paths:Rewrite hardcoded OpenCode paths in markdown files'
     'list:List profiles'
@@ -2090,6 +2296,11 @@ ___CLI__() {
         _describe 'profile' profiles
         return
       fi
+      _files
+      return
+      ;;
+    import)
+      _values 'import option' '-f' '--force' '--skip-existing' '-y' '--yes'
       _files
       return
       ;;
@@ -2408,6 +2619,7 @@ main() {
     upgrade) cmd_upgrade "$@" ;;
     external) cmd_external "$@" ;;
     export) cmd_export "$@" ;;
+    import) cmd_import "$@" ;;
     capture) cmd_capture "${1:-}" "${@:2}" ;;
     rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
     list) cmd_list "$@" ;;
