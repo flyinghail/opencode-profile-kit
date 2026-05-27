@@ -45,7 +45,59 @@ assert_tar_contains "$profile_archive" "metadata.env"
 assert_tar_contains "$profile_archive" "profiles/alpha/opencode.json"
 assert_tar_contains "$profile_archive" "profiles/alpha/.ocp-recipes"
 assert_tar_contains "$profile_archive" "external/alpha/0/data.txt"
+assert_tar_contains "$profile_archive" "external/alpha/0.type"
 assert_tar_contains "$profile_archive" "external/alpha/1/data.txt"
+assert_tar_contains "$profile_archive" "external/alpha/1.type"
+
+mkdir -p "$HOME/data"
+printf 'basename collision\n' > "$HOME/data/data"
+"$OCP" external add alpha "$HOME/data"
+collision_archive="$archives_dir/collision.ocp-profile.tar.gz"
+"$OCP" export -f alpha "$collision_archive" >/dev/null
+assert_tar_contains "$collision_archive" "external/alpha/2.type"
+tar -xOzf "$collision_archive" external/alpha/2.type > "$tmp/collision-type"
+assert_file_contains "$tmp/collision-type" "dir"
+
+collision_home="$tmp/collision-home"
+mkdir -p "$collision_home"
+HOME="$collision_home" XDG_CONFIG_HOME="$tmp/collision-config" XDG_DATA_HOME="$tmp/collision-data" OC_BIN_DIR="$tmp/collision-bin" "$OCP" import "$collision_archive" >/dev/null
+[[ -d "$collision_home/data" ]] || fail "expected basename-collision external path to restore as a directory"
+assert_file_contains "$collision_home/data/data" "basename collision"
+
+escape_stage="$tmp/escape-stage"
+escape_archive="$archives_dir/escape.ocp-profile.tar.gz"
+mkdir -p "$escape_stage/profiles/alpha" "$escape_stage/external/alpha/0" "$escape_stage/state"
+cat > "$escape_stage/metadata.env" <<'META'
+format_version="1"
+kind="profile"
+profiles="alpha"
+global="0"
+source_home="/source/home"
+created_at="2026-01-01T00:00:00Z"
+META
+cat > "$escape_stage/profiles/alpha/.ocp-profile.json" <<'JSON'
+{
+  "name": "alpha",
+  "external": [
+    {
+      "path": "/source/home/../../escaped",
+      "mode": "copy"
+    }
+  ]
+}
+JSON
+printf 'escape\n' > "$escape_stage/external/alpha/0/data.txt"
+printf '/source/home/../../escaped\n' > "$escape_stage/external/alpha/0.target"
+printf 'dir\n' > "$escape_stage/external/alpha/0.type"
+(cd "$escape_stage" && tar -czf "$escape_archive" metadata.env profiles state external)
+escape_home="$tmp/import-parent/inner/home"
+outside_escape="$tmp/import-parent/escaped"
+mkdir -p "$escape_home"
+if HOME="$escape_home" XDG_CONFIG_HOME="$tmp/escape-config" XDG_DATA_HOME="$tmp/escape-data" OC_BIN_DIR="$tmp/escape-bin" "$OCP" import "$escape_archive" > "$tmp/escape.out" 2> "$tmp/escape.err"; then
+  fail "expected escaping external target import to fail"
+fi
+assert_file_contains "$tmp/escape.err" "external target escapes HOME"
+[[ ! -e "$outside_escape" ]] || fail "escaping external target wrote outside import HOME: $outside_escape"
 
 mkdir -p "$HOME/.config/opencode"
 printf 'global config\n' > "$HOME/.config/opencode/opencode.json"
@@ -65,6 +117,7 @@ assert_tar_contains "$global_archive" "global/config/opencode.json"
 assert_tar_contains "$global_archive" "global/.ocp-recipes"
 assert_tar_contains "$global_archive" "global/.ocp-global.json"
 assert_tar_contains "$global_archive" "external/global/0/data.txt"
+assert_tar_contains "$global_archive" "external/global/0.type"
 
 (
   cd "$archives_dir"

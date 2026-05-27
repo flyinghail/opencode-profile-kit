@@ -1618,13 +1618,21 @@ copy_runtime_filtered() {
 }
 
 stage_external_paths() {
-  local manifest="$1" dst_root="$2" index=0 path
+  local manifest="$1" dst_root="$2" index=0 path type
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     [[ -e "$path" ]] || fail "external path missing: $path"
+    if [[ -d "$path" ]]; then
+      type="dir"
+    elif [[ -f "$path" ]]; then
+      type="file"
+    else
+      fail "external path must be a file or directory: $path"
+    fi
     mkdir -p "$dst_root/$index"
     copy_runtime_filtered "$path" "$dst_root/$index"
     printf '%s\n' "$path" > "$dst_root/$index.target"
+    printf '%s\n' "$type" > "$dst_root/$index.type"
     index=$((index + 1))
   done < <(manifest_external_list "$manifest")
 }
@@ -1669,7 +1677,7 @@ confirm_import_conflict() {
 }
 
 import_target_from_archive_path() {
-  local archived="$1" source_home="${2:-}" suffix=""
+  local archived="$1" source_home="${2:-}" suffix="" home_resolved target
 
   if [[ -n "$source_home" ]]; then
     case "$archived" in
@@ -1688,7 +1696,33 @@ import_target_from_archive_path() {
     esac
   fi
 
-  printf '%s%s\n' "$HOME" "$suffix"
+  home_resolved="$(cd -P "$HOME" && pwd -P)"
+  target="$(lexical_normalize_absolute_path "$home_resolved$suffix")" || fail "external target escapes HOME: $archived"
+
+  case "$target" in
+    "$home_resolved"/*) printf '%s\n' "$target" ;;
+    *) fail "external target escapes HOME: $archived" ;;
+  esac
+}
+
+staged_external_file_path() {
+  local src="$1" archived="$2" src_file entry_count found
+  src_file="$src/$(basename "$archived")"
+  if [[ -f "$src_file" ]]; then
+    printf '%s\n' "$src_file"
+    return 0
+  fi
+
+  entry_count="$(find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$entry_count" == "1" ]]; then
+    found="$(find "$src" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+    if [[ -n "$found" ]]; then
+      printf '%s\n' "$found"
+      return 0
+    fi
+  fi
+
+  fail "external staged file missing: $archived"
 }
 
 rebase_external_manifest_entry() {
@@ -1701,7 +1735,7 @@ rebase_external_manifest_entry() {
 
 restore_external_paths() {
   local src_root="$1" manifest="${2:-}" force="$3" skip_existing="$4" yes="$5" source_home="${6:-}"
-  local target_file archived target src entry_count basename status=0
+  local target_file type_file archived target src type entry_count basename src_file status=0
   [[ -d "$src_root" ]] || return 0
 
   for target_file in "$src_root"/*.target; do
@@ -1709,6 +1743,12 @@ restore_external_paths() {
     archived="$(cat "$target_file")"
     target="$(import_target_from_archive_path "$archived" "$source_home")"
     src="${target_file%.target}"
+    type_file="${target_file%.target}.type"
+    if [[ -f "$type_file" ]]; then
+      type="$(cat "$type_file")"
+    else
+      type=""
+    fi
 
     confirm_import_conflict "$target" "$force" "$skip_existing" "$yes" || status=$?
     if [[ "$status" == "2" ]]; then
@@ -1719,15 +1759,31 @@ restore_external_paths() {
     status=0
 
     rm -rf "$target"
-    mkdir -p "$(dirname "$target")"
-    basename="$(basename "$target")"
-    entry_count="$(find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
-    if [[ "$entry_count" == "1" && -f "$src/$basename" ]]; then
-      cp -p "$src/$basename" "$target"
-    else
-      mkdir -p "$target"
-      copy_runtime_filtered "$src" "$target"
-    fi
+    case "$type" in
+      dir)
+        mkdir -p "$target"
+        copy_runtime_filtered "$src" "$target"
+        ;;
+      file)
+        mkdir -p "$(dirname "$target")"
+        src_file="$(staged_external_file_path "$src" "$archived")"
+        cp -p "$src_file" "$target"
+        ;;
+      "")
+        mkdir -p "$(dirname "$target")"
+        basename="$(basename "$target")"
+        entry_count="$(find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ "$entry_count" == "1" && -f "$src/$basename" ]]; then
+          cp -p "$src/$basename" "$target"
+        else
+          mkdir -p "$target"
+          copy_runtime_filtered "$src" "$target"
+        fi
+        ;;
+      *)
+        fail "invalid external path type for $archived: $type"
+        ;;
+    esac
 
     rebase_external_manifest_entry "$manifest" "$archived" "$target"
   done
