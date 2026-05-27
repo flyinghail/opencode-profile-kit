@@ -67,9 +67,9 @@ Usage:
   ocp external remove <profile> <path>         Stop tracking an external HOME path
   ocp external add|list|remove -g [path]       Manage global external migration paths
 
-  ocp export <profile> [archive.tar.gz]        Export a profile migration archive
-  ocp export -g [archive.tar.gz]               Export the global migration archive
-  ocp export -a [-g] [archive.tar.gz]          Export all profiles, optionally with global config
+  ocp export [-f|--force] <profile> [archive.tar.gz] Export a profile migration archive
+  ocp export [-f|--force] -g [archive.tar.gz]  Export the global migration archive
+  ocp export [-f|--force] -a [-g] [archive.tar.gz] Export all profiles, optionally with global config
 
   ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
   ocp capture <profile> --stdin               Deprecated: capture stdin global config changes

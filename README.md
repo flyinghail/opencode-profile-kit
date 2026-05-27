@@ -146,9 +146,9 @@ ocp external add -g <path>
 ocp external list -g
 ocp external remove -g <path>
 
-ocp export <profile> [archive.tar.gz]
-ocp export -g [archive.tar.gz]
-ocp export -a [-g] [archive.tar.gz]
+ocp export [-f|--force] <profile> [archive.tar.gz]
+ocp export [-f|--force] -g [archive.tar.gz]
+ocp export [-f|--force] -a [-g] [archive.tar.gz]
 
 ocp capture <profile> -- <command...>
 ocp capture <profile> --stdin
