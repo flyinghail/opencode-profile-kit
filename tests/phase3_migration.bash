@@ -79,4 +79,12 @@ HOME="$import_home" XDG_CONFIG_HOME="$tmp/import-config" XDG_DATA_HOME="$tmp/imp
 assert_file_contains "$import_home/.config/opencode/opencode.json" "global config"
 assert_file_contains "$import_home/.local/share/global-extra/data.txt" "global extra"
 
+import_all_home="$tmp/import-all-home"
+mkdir -p "$import_all_home"
+HOME="$import_all_home" XDG_CONFIG_HOME="$tmp/import-all-config" XDG_DATA_HOME="$tmp/import-all-data" OC_BIN_DIR="$tmp/import-all-bin" "$OCP" import -f "$all_archive"
+assert_file_contains "$import_all_home/.opencode-profiles/alpha/opencode.json" "profile config"
+assert_file_contains "$import_all_home/.config/opencode/opencode.json" "global config"
+assert_file_contains "$import_all_home/.local/share/alpha-extra/data.txt" "extra"
+assert_file_contains "$import_all_home/.local/share/global-extra/data.txt" "global extra"
+
 echo "phase3 migration tests passed"
