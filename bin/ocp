@@ -240,7 +240,8 @@ ensure_global_manifest() {
     cat > "$GLOBAL_MANIFEST" <<'JSON'
 {
   "name": "global",
-  "external": []
+  "external": [
+  ]
 }
 JSON
   fi
@@ -262,12 +263,32 @@ manifest_external_add() {
   manifest_external_has "$manifest" "$path" && return 0
   tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
   awk -v p="$path" '
-    /"external"[[:space:]]*:[[:space:]]*\[/ && !added {
-      print
+    function print_entry(comma) {
       print "    {"
       print "      \"path\": \"" p "\","
       print "      \"mode\": \"copy\""
-      print "    },"
+      print "    }" comma
+    }
+    /"external"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]/ && !added {
+      sub(/\[[[:space:]]*\]/, "[")
+      print
+      print_entry("")
+      print "  ]"
+      added=1
+      next
+    }
+    /"external"[[:space:]]*:[[:space:]]*\[/ && !added {
+      print
+      if ((getline next_line) > 0) {
+        if (next_line ~ /^[[:space:]]*\]/) {
+          print_entry("")
+        } else {
+          print_entry(",")
+        }
+        print next_line
+      } else {
+        print_entry("")
+      }
       added=1
       next
     }
