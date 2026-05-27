@@ -1049,7 +1049,7 @@ cmd_upgrade_edit_global() {
 
 cmd_upgrade() {
   local sub="${1:-}" global=0 force=0 profile=""
-  case "$sub" in init|edit|show) shift ;; *) sub="run" ;;
+  case "$sub" in init|edit|show|run) shift ;; *) sub="run" ;;
   esac
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1059,6 +1059,7 @@ cmd_upgrade() {
     esac
   done
   if [[ "$global" == "1" && -n "$profile" ]]; then fail "profile cannot be combined with --global"; fi
+  if [[ "$sub" == "init" && -n "$profile" ]]; then ensure_profile_name "$profile"; fi
   case "$sub:$global" in
     run:1) cmd_upgrade_run_global ;;
     run:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_run_profile "$profile" ;;
