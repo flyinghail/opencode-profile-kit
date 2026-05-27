@@ -9,6 +9,7 @@ assert_file_contains() { grep -Fq "$2" "$1" || fail "expected $1 to contain: $2"
 assert_file_not_contains() { ! grep -Fq "$2" "$1" || fail "expected $1 not to contain: $2"; }
 assert_tar_contains() { tar -tzf "$1" | grep -Fxq "$2" || fail "expected archive $1 to contain: $2"; }
 assert_dir_empty() { [[ -z "$(find "$1" -mindepth 1 -print -quit)" ]] || fail "expected directory to be empty: $1"; }
+assert_file_missing() { [[ ! -e "$1" ]] || fail "expected file to be missing: $1"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -49,6 +50,25 @@ assert_tar_contains "$profile_archive" "external/alpha/0/data.txt"
 assert_tar_contains "$profile_archive" "external/alpha/0.type"
 assert_tar_contains "$profile_archive" "external/alpha/1/data.txt"
 assert_tar_contains "$profile_archive" "external/alpha/1.type"
+
+printf 'shared config\n' > "$HOME/.config-shared"
+ln -s "$HOME/.config-shared" "$alpha_dir/shared-link"
+profile_symlink_archive="$archives_dir/profile-symlink.ocp-profile.tar.gz"
+if "$OCP" export alpha "$profile_symlink_archive" > "$tmp/profile-symlink.out" 2> "$tmp/profile-symlink.err"; then
+  fail "expected profile symlink export to fail"
+fi
+assert_file_contains "$tmp/profile-symlink.err" "export source contains symlink"
+assert_file_missing "$profile_symlink_archive"
+rm "$alpha_dir/shared-link"
+
+ln -s "$HOME/.config-shared" "$HOME/.local/share/alpha-extra/shared-link"
+external_symlink_archive="$archives_dir/external-symlink.ocp-profile.tar.gz"
+if "$OCP" export alpha "$external_symlink_archive" > "$tmp/external-symlink.out" 2> "$tmp/external-symlink.err"; then
+  fail "expected external symlink export to fail"
+fi
+assert_file_contains "$tmp/external-symlink.err" "export source contains symlink"
+assert_file_missing "$external_symlink_archive"
+rm "$HOME/.local/share/alpha-extra/shared-link"
 
 mkdir -p "$HOME/data"
 printf 'basename collision\n' > "$HOME/data/data"
@@ -218,6 +238,15 @@ assert_tar_contains "$global_archive" "global/.ocp-global.json"
 assert_tar_contains "$global_archive" "external/global/0/data.txt"
 assert_tar_contains "$global_archive" "external/global/0.type"
 
+ln -s "$HOME/.local/share/global-extra" "$HOME/.config/opencode/global-extra-link"
+global_symlink_archive="$archives_dir/global-symlink.ocp-global.tar.gz"
+if "$OCP" export -g "$global_symlink_archive" > "$tmp/global-symlink.out" 2> "$tmp/global-symlink.err"; then
+  fail "expected global symlink export to fail"
+fi
+assert_file_contains "$tmp/global-symlink.err" "export source contains symlink"
+assert_file_missing "$global_symlink_archive"
+rm "$HOME/.config/opencode/global-extra-link"
+
 (
   cd "$archives_dir"
   "$OCP" export -a -g
@@ -246,6 +275,24 @@ assert_file_contains "$import_all_home/.config/opencode/opencode.json" "global c
 assert_file_contains "$import_all_home/.local/share/alpha-extra/data.txt" "extra"
 assert_file_contains "$import_all_home/tools/nested-extra/data.txt" "nested extra"
 assert_file_contains "$import_all_home/.local/share/global-extra/data.txt" "global extra"
+
+portable_find_bin="$tmp/portable-find-bin"
+mkdir -p "$portable_find_bin"
+cat > "$portable_find_bin/find" <<'FIND'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == "-printf" ]]; then
+    echo "find: -printf: unknown primary or operator" >&2
+    exit 1
+  fi
+done
+exec /usr/bin/find "$@"
+FIND
+chmod +x "$portable_find_bin/find"
+portable_find_home="$tmp/portable-find-home"
+mkdir -p "$portable_find_home"
+PATH="$portable_find_bin:$PATH" HOME="$portable_find_home" XDG_CONFIG_HOME="$tmp/portable-find-config" XDG_DATA_HOME="$tmp/portable-find-data" OC_BIN_DIR="$tmp/portable-find-bin-out" "$OCP" import -f "$all_archive"
+assert_file_contains "$portable_find_home/.opencode-profiles/alpha/opencode.json" "profile config"
 
 import_skip_home="$tmp/import-skip-home"
 mkdir -p "$import_skip_home/.local/share/alpha-extra" "$import_skip_home/.local/share/global-extra"

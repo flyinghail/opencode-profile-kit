@@ -412,6 +412,8 @@ ocp import -y archive.ocp.tar.gz             # answer yes to prompts
 ocp import --yes archive.ocp.tar.gz          # same as -y
 ```
 
+With `--skip-existing`, an existing profile or global config skips that whole unit, including its external path restore and manifest rebasing. Existing external destinations are also kept when their owning profile/global unit is imported.
+
 If no archive is provided interactively, `ocp import` looks for one `.ocp` archive in the current directory and prompts when multiple candidates exist.
 
 ---

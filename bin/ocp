@@ -1603,8 +1603,18 @@ created_at="$(now_utc)"
 META
 }
 
+reject_export_symlinks() {
+  local src="$1" symlink
+  if [[ -L "$src" ]]; then
+    fail "export source contains symlink: $src"
+  fi
+  symlink="$(find "$src" -type l -print -quit 2>/dev/null || true)"
+  [[ -z "$symlink" ]] || fail "export source contains symlink: $symlink"
+}
+
 copy_runtime_filtered() {
   local src="$1" dst="$2"
+
   mkdir -p "$dst"
 
   if [[ -f "$src" ]]; then
@@ -1625,6 +1635,7 @@ stage_external_paths() {
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     [[ -e "$path" ]] || fail "external path missing: $path"
+    reject_export_symlinks "$path"
     if [[ -d "$path" ]]; then
       type="dir"
     elif [[ -f "$path" ]]; then
@@ -1848,18 +1859,20 @@ import_global_from_stage() {
 }
 
 import_profiles_from_stage() {
-  local stage="$1" force="$2" skip_existing="$3" yes="$4" source_home="${5:-}" profile
+  local stage="$1" force="$2" skip_existing="$3" yes="$4" source_home="${5:-}" profile_dir profile
   [[ -d "$stage/profiles" ]] || fail "archive missing profiles directory"
-  while IFS= read -r profile; do
+  while IFS= read -r profile_dir; do
+    profile="$(basename "$profile_dir")"
     [[ -n "$profile" ]] || continue
     import_profile_from_stage "$stage" "$profile" "$force" "$skip_existing" "$yes" "$source_home"
-  done < <(find "$stage/profiles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  done < <(find "$stage/profiles" -mindepth 1 -maxdepth 1 -type d -print | sort)
 }
 
 stage_profile_export() {
   local profile="$1" stage="$2" dir manifest
   dir="$(require_profile_path "$profile")"
   manifest="$(manifest_path "$dir")"
+  reject_export_symlinks "$dir"
   copy_runtime_filtered "$dir" "$stage/profiles/$profile"
   mkdir -p "$stage/state"
   awk -F '\t' -v p="$profile" '$1 == p' "$PROFILES_DB" >> "$stage/state/profiles.tsv" 2>/dev/null || true
@@ -1872,7 +1885,12 @@ stage_profile_export() {
 stage_global_export() {
   local stage="$1"
   ensure_global_manifest
-  [[ -d "$OC_GLOBAL_DIR" ]] && copy_runtime_filtered "$OC_GLOBAL_DIR" "$stage/global/config" || mkdir -p "$stage/global/config"
+  if [[ -d "$OC_GLOBAL_DIR" ]]; then
+    reject_export_symlinks "$OC_GLOBAL_DIR"
+    copy_runtime_filtered "$OC_GLOBAL_DIR" "$stage/global/config"
+  else
+    mkdir -p "$stage/global/config"
+  fi
   cp "$GLOBAL_MANIFEST" "$stage/global/.ocp-global.json"
   [[ -f "$GLOBAL_RECIPE" ]] && cp "$GLOBAL_RECIPE" "$stage/global/.ocp-recipes"
   stage_external_paths "$GLOBAL_MANIFEST" "$stage/external/global"
