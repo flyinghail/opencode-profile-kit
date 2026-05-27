@@ -139,6 +139,13 @@ ocp upgrade edit -g
 ocp upgrade show <profile>
 ocp upgrade show -g
 
+ocp external add <profile> <path>
+ocp external list <profile>
+ocp external remove <profile> <path>
+ocp external add -g <path>
+ocp external list -g
+ocp external remove -g <path>
+
 ocp capture <profile> -- <command...>
 ocp capture <profile> --stdin
 ocp rewrite-paths <profile> [path-suffix]
