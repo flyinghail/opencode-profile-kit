@@ -29,6 +29,14 @@ assert_external_count() {
   [[ "$count" == "$expected" ]] || fail "expected $expected external entries in $manifest, found $count"
 }
 
+assert_command_fails() {
+  local output="$1"
+  shift
+  if ( "$@" ) >"$output" 2>&1; then
+    fail "expected command to fail: $*"
+  fi
+}
+
 assert_external_list_count() {
   local list="$1" expected="$2" count
   count="$(grep -c '^' "$list" || true)"
@@ -163,5 +171,28 @@ validate_manifest "$escaped_manifest"
 assert_file_contains "$escaped_manifest" '/tmp/path with \"quote\" and \\backslash'
 manifest_external_list "$escaped_manifest" > "$tmp/escaped-list"
 assert_list_contains "$tmp/escaped-list" "$escaped_path"
+
+cli_profile_dir="$HOME/.opencode-profiles/cli"
+mkdir -p "$cli_profile_dir"
+write_manifest "$cli_profile_dir" cli ""
+register_profile cli "$cli_profile_dir"
+
+deleted_external="$HOME/.local/share/deleted-external"
+mkdir -p "$deleted_external"
+cmd_external add cli "$deleted_external" >/dev/null
+rm -rf "$deleted_external"
+cmd_external remove cli "$deleted_external" >/dev/null
+cmd_external list cli > "$tmp/deleted-external-list"
+assert_list_not_contains "$tmp/deleted-external-list" "$deleted_external"
+
+assert_command_fails "$tmp/remove-traversal-error" "$OCP" external remove cli "$HOME/../outside"
+assert_file_contains "$tmp/remove-traversal-error" "external path must be under HOME"
+
+mkdir -p "$HOME/.local/share/canonical-target"
+ln -s "$HOME/.local/share/canonical-target" "$HOME/.local/share/canonical-link"
+cmd_external add cli "$HOME/.local/share/canonical-link" >/dev/null
+cmd_external remove cli "$HOME/.local/share/canonical-link" >/dev/null
+cmd_external list cli > "$tmp/canonical-list"
+assert_list_not_contains "$tmp/canonical-list" "$HOME/.local/share/canonical-target"
 
 echo "manifest helper tests passed"

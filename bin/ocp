@@ -1480,6 +1480,55 @@ resolve_home_external_path() {
   esac
 }
 
+lexical_normalize_absolute_path() {
+  local path="$1" part normalized=""
+  local -a parts=() stack=()
+
+  [[ "$path" == /* ]] || return 1
+  IFS='/' read -r -a parts <<< "$path"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ""|.) ;;
+      ..)
+        if (( ${#stack[@]} > 0 )); then
+          unset 'stack[${#stack[@]}-1]'
+        fi
+        ;;
+      *) stack+=("$part") ;;
+    esac
+  done
+
+  for part in "${stack[@]}"; do
+    normalized+="/$part"
+  done
+  printf '%s\n' "${normalized:-/}"
+}
+
+resolve_home_external_remove_path() {
+  local path expanded resolved home_resolved suffix
+  path="$1"
+
+  expanded="$(expand_home_path "$path")"
+  case "$expanded" in
+    "$HOME"|"$HOME"/*) ;;
+    *) fail "external path must be under HOME: $path" ;;
+  esac
+
+  if [[ -e "$expanded" ]]; then
+    resolve_home_external_path "$path"
+    return
+  fi
+
+  home_resolved="$(cd -P "$HOME" && pwd -P)"
+  suffix="${expanded#"$HOME"}"
+  resolved="$(lexical_normalize_absolute_path "$home_resolved$suffix")" || fail "external path must be under HOME: $path"
+
+  case "$resolved" in
+    "$home_resolved"/*) printf '%s\n' "$resolved" ;;
+    *) fail "external path must be under HOME: $path" ;;
+  esac
+}
+
 external_usage() {
   case "$1" in
     add) fail "usage: ocp external add <profile> <path> OR ocp external add -g <path>" ;;
@@ -1530,7 +1579,7 @@ cmd_external() {
   case "$sub" in
     list) manifest_external_list "$manifest" ;;
     add) [[ -n "$path" ]] || fail "path is required"; resolved="$(resolve_home_external_path "$path")"; manifest_external_add "$manifest" "$resolved"; echo "added external: $resolved" ;;
-    remove) [[ -n "$path" ]] || fail "path is required"; resolved="$(resolve_home_external_path "$path")"; manifest_external_remove "$manifest" "$resolved"; echo "removed external: $resolved" ;;
+    remove) [[ -n "$path" ]] || fail "path is required"; resolved="$(resolve_home_external_remove_path "$path")"; manifest_external_remove "$manifest" "$resolved"; echo "removed external: $resolved" ;;
   esac
 }
 
