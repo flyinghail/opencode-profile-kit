@@ -34,6 +34,7 @@ This tool is for people who want OpenCode profile management to be boring, local
 - [Basic Usage](#basic-usage)
 - [Installing Into a Profile](#installing-into-a-profile)
 - [Capturing Global Installers](#capturing-global-installers)
+- [Upgrade Recipes](#upgrade-recipes)
 - [Rewriting Hardcoded Paths](#rewriting-hardcoded-paths)
 - [Clone](#clone)
 - [Shared Config Links](#shared-config-links)
@@ -128,6 +129,15 @@ ocp bin create <profile> <command-name>
 ocp bin list [profile]
 ocp bin remove <command-name>
 ocp bin repair <command-name|--all>
+
+ocp upgrade <profile>
+ocp upgrade -g
+ocp upgrade init [-f|--force] <profile>
+ocp upgrade init [-f|--force] -g
+ocp upgrade edit <profile>
+ocp upgrade edit -g
+ocp upgrade show <profile>
+ocp upgrade show -g
 
 ocp capture <profile> -- <command...>
 ocp capture <profile> --stdin
@@ -299,6 +309,34 @@ Fedora:
 ```bash
 sudo dnf install rsync
 ```
+
+---
+
+## Upgrade Recipes
+
+`ocp upgrade <profile>` runs `$OC_PROFILES_DIR/<profile>/.ocp-recipes` with `OPENCODE_CONFIG_DIR` set to the profile directory and cwd set to the profile directory.
+
+Create a guided recipe:
+
+```bash
+ocp upgrade init my-profile
+```
+
+Edit or view it:
+
+```bash
+ocp upgrade edit my-profile
+ocp upgrade show my-profile
+```
+
+Global OpenCode config uses `-g`:
+
+```bash
+ocp upgrade init -g
+ocp upgrade -g
+```
+
+Recipes are Bash scripts. Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
 
 ---
 
