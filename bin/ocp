@@ -1583,6 +1583,40 @@ cmd_external() {
   esac
 }
 
+write_archive_metadata() {
+  local file="$1" kind="$2" profiles="$3" global="$4"
+  cat > "$file" <<META
+format_version="1"
+kind="$kind"
+profiles="$profiles"
+global="$global"
+created_at="$(now_utc)"
+META
+}
+
+copy_runtime_filtered() {
+  local src="$1" dst="$2"
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --exclude session --exclude tmp --exclude logs --exclude semantic --exclude index --exclude cache --exclude .cache "$src/" "$dst/"
+  else
+    (cd "$src" && tar cf - .) | (cd "$dst" && tar xpf -)
+    rm -rf "$dst/session" "$dst/tmp" "$dst/logs" "$dst/semantic" "$dst/index" "$dst/cache" "$dst/.cache"
+  fi
+}
+
+stage_external_paths() {
+  local manifest="$1" dst_root="$2" index=0 path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    [[ -e "$path" ]] || fail "external path missing: $path"
+    mkdir -p "$dst_root/$index"
+    copy_runtime_filtered "$path" "$dst_root/$index"
+    printf '%s\n' "$path" > "$dst_root/$index.target"
+    index=$((index + 1))
+  done < <(manifest_external_list "$manifest")
+}
+
 cmd_capture() {
   local profile="${1:-}"
   shift || true
