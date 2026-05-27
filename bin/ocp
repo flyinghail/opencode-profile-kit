@@ -230,6 +230,64 @@ write_manifest() {
 JSON
 }
 
+global_manifest_path() {
+  printf '%s\n' "$GLOBAL_MANIFEST"
+}
+
+ensure_global_manifest() {
+  mkdir -p "$GLOBAL_META_DIR"
+  if [[ ! -f "$GLOBAL_MANIFEST" ]]; then
+    cat > "$GLOBAL_MANIFEST" <<'JSON'
+{
+  "name": "global",
+  "external": []
+}
+JSON
+  fi
+}
+
+manifest_external_list() {
+  local manifest="$1"
+  [[ -f "$manifest" ]] || return 0
+  awk -F '"' '/"path"[[:space:]]*:/ { print $4 }' "$manifest"
+}
+
+manifest_external_has() {
+  local manifest="$1" path="$2"
+  manifest_external_list "$manifest" | grep -Fxq "$path"
+}
+
+manifest_external_add() {
+  local manifest="$1" path="$2" tmp
+  manifest_external_has "$manifest" "$path" && return 0
+  tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
+  awk -v p="$path" '
+    /"external"[[:space:]]*:[[:space:]]*\[/ && !added {
+      print
+      print "    {"
+      print "      \"path\": \"" p "\","
+      print "      \"mode\": \"copy\""
+      print "    },"
+      added=1
+      next
+    }
+    { print }
+  ' "$manifest" > "$tmp"
+  mv "$tmp" "$manifest"
+}
+
+manifest_external_remove() {
+  local manifest="$1" path="$2" tmp
+  tmp="$(mktemp "${manifest}.tmp.XXXXXX")"
+  awk -v p="$path" '
+    $0 ~ /"path"[[:space:]]*:/ && index($0, "\"" p "\"") { skip=1; next }
+    skip && /"mode"[[:space:]]*:/ { skip=0; next }
+    skip && /}/ { skip=0; next }
+    { print }
+  ' "$manifest" > "$tmp"
+  mv "$tmp" "$manifest"
+}
+
 with_state_lock() {
   ensure_state
 
