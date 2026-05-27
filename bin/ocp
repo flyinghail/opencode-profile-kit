@@ -1454,14 +1454,38 @@ cmd_upgrade() {
 }
 
 resolve_home_external_path() {
-  local path resolved home_resolved
+  local path expanded resolved home_resolved
   path="$1"
-  resolved="$(realpath -m -- "$(expand_home_path "$path")")"
-  home_resolved="$(realpath -m -- "$HOME")"
+
+  expanded="$(expand_home_path "$path")"
+  case "$expanded" in
+    "$HOME"|"$HOME"/*) ;;
+    *) fail "external path must be under HOME: $path" ;;
+  esac
+
+  [[ -e "$expanded" ]] || fail "external path must exist: $path"
+
+  if [[ -d "$expanded" ]]; then
+    resolved="$(cd -P "$expanded" && pwd -P)"
+  else
+    [[ ! -L "$expanded" ]] || fail "external path must not be a symlink: $path"
+    resolved="$(cd -P "$(dirname "$expanded")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$expanded")")"
+  fi
+
+  home_resolved="$(cd -P "$HOME" && pwd -P)"
 
   case "$resolved" in
     "$home_resolved"/*) printf '%s\n' "$resolved" ;;
     *) fail "external path must be under HOME: $path" ;;
+  esac
+}
+
+external_usage() {
+  case "$1" in
+    add) fail "usage: ocp external add <profile> <path> OR ocp external add -g <path>" ;;
+    list) fail "usage: ocp external list <profile> OR ocp external list -g" ;;
+    remove) fail "usage: ocp external remove <profile> <path> OR ocp external remove -g <path>" ;;
+    *) fail "usage: ocp external add|list|remove ..." ;;
   esac
 }
 
@@ -1481,12 +1505,27 @@ cmd_external() {
   local sub="${1:-}" global=0 profile="" path="" manifest resolved
   shift || true
   [[ "$sub" == "add" || "$sub" == "list" || "$sub" == "remove" ]] || fail "usage: ocp external add|list|remove ..."
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -g|--global) global=1; shift ;;
-      *) if [[ -z "$profile" && "$global" != "1" ]]; then profile="$1"; else path="$1"; fi; shift ;;
-    esac
-  done
+
+  case "$sub" in
+    list)
+      [[ $# -eq 1 ]] || external_usage "$sub"
+      case "$1" in
+        -g|--global) global=1 ;;
+        -*) external_usage "$sub" ;;
+        *) profile="$1" ;;
+      esac
+      ;;
+    add|remove)
+      [[ $# -eq 2 ]] || external_usage "$sub"
+      case "$1" in
+        -g|--global) global=1; path="$2" ;;
+        -*) external_usage "$sub" ;;
+        *) profile="$1"; path="$2" ;;
+      esac
+      case "$path" in -g|--global) external_usage "$sub" ;; esac
+      ;;
+  esac
+
   manifest="$(external_manifest_for_target "$global" "$profile")"
   case "$sub" in
     list) manifest_external_list "$manifest" ;;
