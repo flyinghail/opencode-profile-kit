@@ -2267,6 +2267,12 @@ ___CLI___completion() {
           return 0
           ;;
         export)
+          if [[ "$prev" == "-f" || "$prev" == "--force" ]]; then
+            local profiles
+            profiles="$(__CLI__ list 2>/dev/null)"
+            COMPREPLY=( $(compgen -W "-a --all -g --global $profiles" -- "$cur") )
+            return 0
+          fi
           COMPREPLY=( $(compgen -W "-a --all -g --global -f --force" -- "$cur") )
           COMPREPLY+=( $(compgen -f -- "$cur") )
           return 0
@@ -2392,6 +2398,11 @@ ___CLI__() {
     export)
       if (( CURRENT == 3 )); then
         _values 'export option' '-a' '--all' '-g' '--global' '-f' '--force'
+        _describe 'profile' profiles
+        return
+      fi
+      if (( CURRENT == 4 )) && [[ "$words[3]" == "-f" || "$words[3]" == "--force" ]]; then
+        _values 'export option' '-a' '--all' '-g' '--global'
         _describe 'profile' profiles
         return
       fi
