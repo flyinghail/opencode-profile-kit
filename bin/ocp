@@ -270,12 +270,12 @@ manifest_external_add() {
       print "    }" comma
     }
     /"external"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]/ && !added {
-      closing_comma = ($0 ~ /\][[:space:]]*,[[:space:]]*$/) ? "," : ""
-      sub(/[[:space:]]*,[[:space:]]*$/, "")
-      sub(/\[[[:space:]]*\]/, "[")
-      print
+      match($0, /\[[[:space:]]*\]/)
+      prefix = substr($0, 1, RSTART - 1)
+      suffix = substr($0, RSTART + RLENGTH)
+      print prefix "["
       print_entry("")
-      print "  ]" closing_comma
+      print "  ]" suffix
       added=1
       next
     }
