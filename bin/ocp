@@ -641,6 +641,17 @@ recipe_path_for_global() {
   printf '%s\n' "$GLOBAL_RECIPE"
 }
 
+ensure_default_opencode_config() {
+  local profile_dir="$1" config_file
+  config_file="$profile_dir/opencode.jsonc"
+  [[ -e "$config_file" || -L "$config_file" ]] && return 0
+  cat > "$config_file" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+JSON
+}
+
 ensure_global_dirs() {
   mkdir -p "$OC_GLOBAL_DIR" "$GLOBAL_META_DIR"
 }
@@ -700,6 +711,7 @@ cmd_new() {
     echo "profile directory already exists; skipping template copy: $template"
   fi
 
+  ensure_default_opencode_config "$profile_dir"
   write_manifest "$profile_dir" "$profile" "$template" "$((1 - existed))"
   register_profile "$profile" "$profile_dir"
   echo "created: $profile -> $profile_dir"

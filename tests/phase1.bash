@@ -19,6 +19,11 @@ assert_eq() {
   [[ "$actual" == "$expected" ]] || fail "$label: expected '$expected', got '$actual'"
 }
 
+assert_path_absent() {
+  local path="$1"
+  [[ ! -e "$path" ]] || fail "expected path to be absent: $path"
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -30,6 +35,17 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$OC_BIN_DIR"
 
 "$OCP" new alpha >/dev/null
 alpha_dir="$HOME/.opencode-profiles/alpha"
+assert_file_contains "$alpha_dir/opencode.jsonc" '"$schema": "https://opencode.ai/config.json"'
+for default_dir in agents commands modes plugins skills tools themes; do
+  assert_path_absent "$alpha_dir/$default_dir"
+done
+
+"$OCP" new template >/dev/null
+template_dir="$HOME/.opencode-profiles/template"
+printf '%s\n' '{' '  "$schema": "https://example.invalid/custom.json"' '}' > "$template_dir/opencode.jsonc"
+"$OCP" new gamma --from template >/dev/null
+gamma_dir="$HOME/.opencode-profiles/gamma"
+assert_file_contains "$gamma_dir/opencode.jsonc" '"$schema": "https://example.invalid/custom.json"'
 
 printf '%s\n' 'echo "$OPENCODE_CONFIG_DIR" > env.out' 'pwd > pwd.out' | "$OCP" exec alpha --stdin
 assert_eq "$(cat "$alpha_dir/env.out")" "$alpha_dir" "exec --stdin OPENCODE_CONFIG_DIR"
