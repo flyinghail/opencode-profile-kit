@@ -42,6 +42,9 @@ Usage:
   ocp exec <profile> --stdin                  Run stdin script with OPENCODE_CONFIG_DIR
 
   ocp env <profile> [bash|zsh]                Print shell env export
+  ocp env list <profile>                      List preset profile environment variables
+  ocp env set <profile> KEY=value             Set a preset profile environment variable
+  ocp env remove <profile> KEY                Remove a preset profile environment variable
   ocp clear [bash|zsh]                        Print shell env unset
   ocp which                                   Show current profile from OPENCODE_CONFIG_DIR
 
@@ -194,7 +197,15 @@ ensure_command_name() {
   [[ "$n" =~ ^[a-zA-Z0-9._-]+$ ]] || fail "invalid command name: $n"
 }
 
+ensure_env_key() {
+  local key="${1:-}"
+  [[ -n "$key" ]] || fail "environment variable name is required"
+  [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "invalid environment variable name: $key"
+  [[ "$key" != "OPENCODE_CONFIG_DIR" ]] || fail "reserved environment variable: $key"
+}
+
 manifest_path() { echo "$1/.ocp-profile.json"; }
+profile_env_path() { echo "$1/.ocp-env"; }
 
 write_manifest() {
   local dir="$1" name="$2" template="${3:-}" force="${4:-0}" manifest created_at template_json
@@ -921,15 +932,103 @@ cmd_remove() {
   if [[ "$delete_dir" == "1" && -n "$dir" ]]; then rm -rf "$dir"; echo "removed: $profile and deleted $dir"; else echo "removed from registry: $profile"; fi
 }
 
+env_file_read_active() {
+  local env_file="$1" line key
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in ""|[[:space:]]\#*|\#*) continue ;; esac
+    [[ "$line" == *=* ]] || fail "invalid env line: $line"
+    key="${line%%=*}"
+    [[ "$key" == "OPENCODE_CONFIG_DIR" ]] && continue
+    ensure_env_key "$key"
+    printf '%s\n' "$line"
+  done < "$env_file"
+}
+
+load_profile_env_file() {
+  local dir="$1" env_file line key value
+  env_file="$(profile_env_path "$dir")"
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    export "$key=$value"
+  done < <(env_file_read_active "$env_file")
+}
+
+print_profile_env_exports() {
+  local dir="$1" shell="$2" env_file line key value
+  env_file="$(profile_env_path "$dir")"
+  case "$shell" in bash|zsh|sh) ;; *) fail "unsupported shell: $shell" ;; esac
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    printf 'export %s=%q\n' "$key" "$value"
+  done < <(env_file_read_active "$env_file")
+  printf 'export OPENCODE_CONFIG_DIR=%q\n' "$dir"
+}
+
+cmd_env_list() {
+  local profile="$1" dir
+  dir="$(require_profile_path "$profile")"
+  env_file_read_active "$(profile_env_path "$dir")"
+}
+
+cmd_env_set() {
+  local profile="$1" assignment="$2" dir env_file key value tmp found=0 line existing_key
+  [[ -n "$assignment" && "$assignment" == *=* ]] || fail "usage: ocp env set <profile> KEY=value"
+  key="${assignment%%=*}"
+  value="${assignment#*=}"
+  ensure_env_key "$key"
+  dir="$(require_profile_path "$profile")"
+  env_file="$(profile_env_path "$dir")"
+  tmp="$(mktemp "${env_file}.tmp.XXXXXX")"
+  if [[ -f "$env_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == *=* ]]; then
+        existing_key="${line%%=*}"
+        if [[ "$existing_key" == "$key" ]]; then
+          printf '%s=%s\n' "$key" "$value" >> "$tmp"
+          found=1
+          continue
+        fi
+      fi
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$env_file"
+  fi
+  [[ "$found" == "1" ]] || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" "$env_file"
+  echo "set env: $key"
+}
+
+cmd_env_remove() {
+  local profile="$1" key="$2" dir env_file tmp line existing_key
+  ensure_env_key "$key"
+  dir="$(require_profile_path "$profile")"
+  env_file="$(profile_env_path "$dir")"
+  tmp="$(mktemp "${env_file}.tmp.XXXXXX")"
+  if [[ -f "$env_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == *=* ]]; then
+        existing_key="${line%%=*}"
+        [[ "$existing_key" == "$key" ]] && continue
+      fi
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$env_file"
+  fi
+  mv "$tmp" "$env_file"
+  echo "removed env: $key"
+}
+
 cmd_run() {
-  local profile="${1:-}" dir;
-  shift || true;
+  local profile="${1:-}" dir
+  shift || true
 
   require_opencode
 
-  dir="$(require_profile_path "$profile")";
-  export OPENCODE_CONFIG_DIR="$dir";
-  exec opencode "$@";
+  dir="$(require_profile_path "$profile")"
+  load_profile_env_file "$dir"
+  export OPENCODE_CONFIG_DIR="$dir"
+  exec opencode "$@"
 }
 
 cmd_shell() {
@@ -938,6 +1037,7 @@ cmd_shell() {
   [[ $# -eq 0 ]] || fail "usage: ocp shell <profile>"
 
   dir="$(require_profile_path "$profile")"
+  load_profile_env_file "$dir"
   export OPENCODE_CONFIG_DIR="$dir"
   cd "$dir"
   shell_name="${SHELL:-/bin/sh}"
@@ -960,6 +1060,7 @@ cmd_exec() {
   shift || true
 
   dir="$(require_profile_path "$profile")"
+  load_profile_env_file "$dir"
   export OPENCODE_CONFIG_DIR="$dir"
 
   case "${1:-}" in
@@ -980,9 +1081,30 @@ cmd_exec() {
 }
 
 cmd_env() {
-  local profile="${1:-}" shell="${2:-bash}" dir
-  dir="$(require_profile_path "$profile")"
-  case "$shell" in bash|zsh|sh) printf 'export OPENCODE_CONFIG_DIR=%q\n' "$dir" ;; *) fail "unsupported shell: $shell" ;; esac
+  local sub="${1:-}" profile shell dir
+  case "$sub" in
+    list)
+      shift
+      [[ $# -eq 1 ]] || fail "usage: ocp env list <profile>"
+      cmd_env_list "$1"
+      ;;
+    set)
+      shift
+      [[ $# -eq 2 ]] || fail "usage: ocp env set <profile> KEY=value"
+      cmd_env_set "$1" "$2"
+      ;;
+    remove)
+      shift
+      [[ $# -eq 2 ]] || fail "usage: ocp env remove <profile> KEY"
+      cmd_env_remove "$1" "$2"
+      ;;
+    *)
+      profile="$sub"
+      shell="${2:-bash}"
+      dir="$(require_profile_path "$profile")"
+      print_profile_env_exports "$dir" "$shell"
+      ;;
+  esac
 }
 
 cmd_clear() { case "${1:-bash}" in bash|zsh|sh) echo 'unset OPENCODE_CONFIG_DIR' ;; *) fail "unsupported shell: ${1:-}" ;; esac; }
@@ -2097,7 +2219,11 @@ ___CLI___completion() {
         run|shell|exec|env|link|rewrite-paths|path|rename|remove|doctor|clone)
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
-          COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+          if [[ "$cmd" == "env" ]]; then
+            COMPREPLY=( $(compgen -W "list set remove $profiles" -- "$cur") )
+          else
+            COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+          fi
           return 0
           ;;
         external)
@@ -2151,6 +2277,19 @@ ___CLI___completion() {
           ;;
         completion)
           COMPREPLY=( $(compgen -W "--install" -- "$cur") )
+          return 0
+          ;;
+        env)
+          local profiles
+          profiles="$(__CLI__ list 2>/dev/null)"
+          case "${COMP_WORDS[2]}" in
+            list|set|remove)
+              COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+              ;;
+            *)
+              COMPREPLY=( $(compgen -W "bash zsh sh" -- "$cur") )
+              ;;
+          esac
           return 0
           ;;
         bin)
@@ -2246,6 +2385,23 @@ ___CLI___completion() {
           COMPREPLY+=( $(compgen -f -- "$cur") )
           return 0
           ;;
+        env)
+          case "${COMP_WORDS[2]}" in
+            set)
+              return 0
+              ;;
+            remove)
+              local profile_dir env_file keys
+              profile_dir="$(__CLI__ path "${COMP_WORDS[3]}" 2>/dev/null || true)"
+              env_file="$profile_dir/.ocp-env"
+              if [[ -f "$env_file" ]]; then
+                keys="$(awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/ { print $1 }' "$env_file")"
+                COMPREPLY=( $(compgen -W "$keys" -- "$cur") )
+              fi
+              return 0
+              ;;
+          esac
+          ;;
       esac
       ;;
     5)
@@ -2282,7 +2438,7 @@ ___CLI__() {
     'run:Run opencode with a profile'
     'shell:Start a shell in a profile directory'
     'exec:Run a command with a profile environment'
-    'env:Print shell export for a profile'
+    'env:Print or manage profile environment presets'
     'clear:Print shell unset for OPENCODE_CONFIG_DIR'
     'which:Show current profile'
     'link:Symlink global config path into a profile'
@@ -2313,6 +2469,9 @@ ___CLI__() {
   case "$words[2]" in
     run|shell|exec|env|link|rewrite-paths|path|rename|remove|doctor)
       if (( CURRENT == 3 )); then
+        if [[ "$words[2]" == "env" ]]; then
+          _values 'env subcommand' list set remove
+        fi
         _describe 'profile' profiles
         return
       fi
@@ -2399,6 +2558,29 @@ ___CLI__() {
       fi
       _values 'new option' '--from'
       return
+      ;;
+    env)
+      if (( CURRENT == 4 )); then
+        case "$words[3]" in
+          list|set|remove)
+            _describe 'profile' profiles
+            return
+            ;;
+          *)
+            _values 'shell' bash zsh sh
+            return
+            ;;
+        esac
+      elif (( CURRENT == 5 )) && [[ "$words[3]" == "remove" ]]; then
+        local profile_dir env_file keys
+        profile_dir="$(_call_program profile-path __CLI__ path "$words[4]" 2>/dev/null)"
+        env_file="$profile_dir/.ocp-env"
+        if [[ -f "$env_file" ]]; then
+          keys=("${(@f)$(awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/ { print $1 }' "$env_file")}")
+          _describe 'environment variable' keys
+        fi
+        return
+      fi
       ;;
     remove)
       if (( CURRENT == 4 )); then

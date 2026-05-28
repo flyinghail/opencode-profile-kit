@@ -119,6 +119,9 @@ ocp exec <profile> -- <command...>
 ocp exec <profile> --stdin
 
 ocp env <profile> [bash|zsh]
+ocp env list <profile>
+ocp env set <profile> KEY=value
+ocp env remove <profile> KEY
 ocp clear [bash|zsh]
 ocp which
 
@@ -194,6 +197,18 @@ ocp exec my-profile -- zsh
 ### Profile shell
 
 `ocp shell <profile>` starts `${SHELL:-/bin/sh}` in the profile directory with `OPENCODE_CONFIG_DIR` set.
+
+### Profile environment presets
+
+Store profile-specific environment variables in `.ocp-env`:
+
+```bash
+ocp env set my-profile ANTHROPIC_SMALL_FAST_MODEL=claude-haiku
+ocp env list my-profile
+ocp env remove my-profile ANTHROPIC_SMALL_FAST_MODEL
+```
+
+Presets are applied by `ocp run`, `ocp shell`, `ocp exec`, and `ocp env <profile>`. `OPENCODE_CONFIG_DIR` is always set by `ocp` and cannot be overridden by `.ocp-env`.
 
 ### Multi-line scripts
 
