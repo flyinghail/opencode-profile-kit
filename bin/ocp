@@ -2778,7 +2778,6 @@ cmd_rewrite_paths() {
   }
 
   echo "[ocp] files to update:"
-  echo "$files"
   echo
 
   local escaped_search
