@@ -33,7 +33,6 @@ This tool is for people who want OpenCode profile management to be boring, local
 - [Commands](#commands)
 - [Basic Usage](#basic-usage)
 - [Installing Into a Profile](#installing-into-a-profile)
-- [Capturing Global Installers](#capturing-global-installers)
 - [Upgrade Recipes](#upgrade-recipes)
 - [Migration Archives](#migration-archives)
 - [Rewriting Hardcoded Paths](#rewriting-hardcoded-paths)
@@ -153,8 +152,6 @@ ocp export [-f|--force] -g [file.tar.gz]
 ocp export [-f|--force] -a -g [file.tar.gz]
 ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz]
 
-ocp capture <profile> -- <command...>
-ocp capture <profile> --stdin
 ocp rewrite-paths <profile> [path-suffix]
 
 ocp list
@@ -209,23 +206,11 @@ npx some-package install
 SCRIPT
 ```
 
-For new installers that write to `~/.config/opencode`, prefer an explicit `ocp upgrade` recipe; use deprecated `capture --stdin` only for legacy workflows.
+For installers that write to `~/.config/opencode`, prefer an explicit `ocp upgrade` recipe.
 
 ### Rename
 
 `ocp rename <old> <new>` renames the profile directory and updates registry, manifest, and registered launcher commands. It warns if markdown files still contain the old profile path.
-
-Export the profile into the current shell:
-
-```bash
-eval "$(ocp env my-profile)"
-```
-
-Clear it:
-
-```bash
-eval "$(ocp clear)"
-```
 
 Show the current profile from `OPENCODE_CONFIG_DIR`:
 
@@ -248,7 +233,7 @@ ocp exec my-profile -- npx <package> install
 You can also enter the profile environment first:
 
 ```bash
-eval "$(ocp env my-profile)"
+ocp shell my-profile
 ```
 
 Then run the installer normally:
@@ -264,65 +249,6 @@ Everything should now install into:
 ```
 
 instead of the global OpenCode config directory.
-
-This uses `eval` because a child process cannot modify the environment of its parent shell.
-
-**Only run this with a trusted local `ocp` installation.** If you prefer not to use `eval`, use `ocp exec` instead.
-
----
-
-## Capturing Global Installers
-
-`ocp capture` is deprecated. It remains available for users who know exactly what it does, but new workflows should prefer `ocp upgrade` scripts with explicit backup, install, selective copy, and restore commands. `capture` syncs the changed `~/.config/opencode` tree into a profile, so a changed global `opencode.json` can be copied into the profile and override profile-specific configuration.
-
-Some tools ignore `OPENCODE_CONFIG_DIR` and always install into:
-
-```text
-~/.config/opencode
-```
-
-Legacy capture invocation:
-
-```bash
-ocp capture my-profile -- npx <package> install
-```
-
-`capture` will:
-
-1. backup `~/.config/opencode`
-2. run the installer
-3. copy resulting changes into the target profile
-4. restore the original global config
-
-This can provide profile-isolated installation even for tools that hardcode global paths, but it remains deprecated. For new workflows, write an explicit recipe under [Upgrade Recipes](#upgrade-recipes) instead.
-
-`capture` requires `rsync`.
-
-Install it first:
-
-Ubuntu/Debian:
-
-```bash
-sudo apt update && sudo apt install -y rsync
-```
-
-macOS:
-
-```bash
-brew install rsync
-```
-
-Arch:
-
-```bash
-sudo pacman -S rsync
-```
-
-Fedora:
-
-```bash
-sudo dnf install rsync
-```
 
 ---
 
@@ -465,10 +391,12 @@ ocp rewrite-paths my-profile /.config/opencode/commands
 
 For new global-path installer workflows, prefer an explicit recipe under [Upgrade Recipes](#upgrade-recipes) and enable `rewrite-paths=true` when generated markdown should be rewritten after a successful upgrade.
 
-Legacy capture workflow:
+Upgrade recipe workflow:
 
 ```bash
-ocp capture my-profile -- npx <package> install
+ocp upgrade init my-profile
+ocp upgrade edit my-profile
+ocp upgrade my-profile
 ocp rewrite-paths my-profile
 ```
 

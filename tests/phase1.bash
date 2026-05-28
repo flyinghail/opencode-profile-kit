@@ -74,9 +74,4 @@ if grep -Fq 'oc-alpha' "$tmp/bin-list-final"; then
   fail "bin remove left bins.tsv entry"
 fi
 
-if command -v rsync >/dev/null 2>&1; then
-  printf '%s\n' 'mkdir -p "$HOME/.config/opencode"' 'echo captured > "$HOME/.config/opencode/captured.txt"' | "$OCP" capture beta --stdin
-  assert_file_contains "$beta_dir/captured.txt" 'captured'
-fi
-
 echo "phase1 behavior tests passed"

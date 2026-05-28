@@ -75,8 +75,6 @@ Usage:
   ocp export [-f|--force] -a -g [file.tar.gz]  Export all profiles plus global config
   ocp import [-f|--force|--skip-existing|-y|--yes] [file.tar.gz] Import a migration archive
 
-  ocp capture <profile> -- <command...>       Deprecated: capture global installer changes
-  ocp capture <profile> --stdin               Deprecated: capture stdin global config changes
   ocp rewrite-paths <profile> [path-suffix]   Rewrite hardcoded OpenCode paths in markdown files
 
   ocp list                                    List profiles
@@ -114,29 +112,6 @@ Install OpenCode first:
 After installation, make sure this works:
 
   opencode --help
-EOF
-    exit 1
-  fi
-}
-
-require_rsync() {
-  if ! command -v rsync >/dev/null 2>&1; then
-    cat >&2 <<'EOF'
-error: rsync is required for ocp capture
-
-Install rsync first:
-
-  Ubuntu/Debian:
-    sudo apt update && sudo apt install -y rsync
-
-  macOS:
-    brew install rsync
-
-  Arch:
-    sudo pacman -S rsync
-
-  Fedora:
-    sudo dnf install rsync
 EOF
     exit 1
   fi
@@ -2088,79 +2063,6 @@ cmd_import() {
   echo "imported: $file"
 }
 
-cmd_capture() {
-  local profile="${1:-}"
-  shift || true
-
-  local stdin_mode=0
-  case "${1:-}" in
-    --stdin)
-      stdin_mode=1
-      shift
-      [[ $# -eq 0 ]] || fail "usage: ocp capture <profile> --stdin"
-      ;;
-    --)
-      shift
-      [[ $# -gt 0 ]] || fail "capture command required"
-      ;;
-    *)
-      fail "usage: ocp capture <profile> -- <command...> OR ocp capture <profile> --stdin"
-      ;;
-  esac
-
-  echo "warning: ocp capture is deprecated; prefer ocp upgrade scripts with precise backup/copy/restore logic" >&2
-  echo "warning: capture may copy global opencode.json into a profile and override profile config" >&2
-
-  require_rsync
-
-  local profile_dir
-  profile_dir="$(require_profile_path "$profile")"
-
-  local global_dir="$OC_GLOBAL_DIR"
-  mkdir -p "$global_dir"
-
-  local tmp backup_dir restored=0 status=0
-  tmp="$(mktemp -d)"
-  backup_dir="$tmp/backup"
-  mkdir -p "$backup_dir"
-
-  restore_global() {
-    if [[ "$restored" == "0" ]]; then
-      echo "[ocp] restoring global config..."
-      mkdir -p "$global_dir"
-      rsync -a --delete "$backup_dir/" "$global_dir/"
-      restored=1
-    fi
-    rm -rf "$tmp"
-  }
-
-  trap restore_global EXIT INT TERM
-
-  echo "[ocp] backing up global config..."
-  rsync -a --delete "$global_dir/" "$backup_dir/"
-
-  echo "[ocp] running installer..."
-  if [[ "$stdin_mode" == "1" ]]; then
-    run_stdin_script || status=$?
-  else
-    "$@" || status=$?
-  fi
-
-  if [[ "$status" == "0" ]]; then
-    echo "[ocp] syncing changes into profile..."
-    rsync -a       --exclude session       --exclude tmp       --exclude logs       --exclude semantic       --exclude index       --exclude cache       --exclude .cache       "$global_dir/"       "$profile_dir/"
-  else
-    echo "[ocp] installer failed with exit code: $status" >&2
-  fi
-
-  restore_global
-  trap - EXIT INT TERM
-
-  [[ "$status" == "0" ]] || exit "$status"
-  echo "[ocp] done"
-}
-
-
 detect_shell() {
   local shell_name
   shell_name="$(basename "${SHELL:-}")"
@@ -2183,7 +2085,7 @@ ___CLI___completion() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   cmd="${COMP_WORDS[1]}"
 
-  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external export import capture rewrite-paths list path refresh doctor completion config help"
+  local commands="new clone rename remove run shell exec env clear which link link-all bin upgrade external export import rewrite-paths list path refresh doctor completion config help"
 
   case "$COMP_CWORD" in
     1)
@@ -2192,7 +2094,7 @@ ___CLI___completion() {
       ;;
     2)
       case "$cmd" in
-        run|shell|exec|env|link|capture|rewrite-paths|path|rename|remove|doctor|clone)
+        run|shell|exec|env|link|rewrite-paths|path|rename|remove|doctor|clone)
           local profiles
           profiles="$(__CLI__ list 2>/dev/null)"
           COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
@@ -2390,7 +2292,6 @@ ___CLI__() {
     'external:Manage external migration paths'
     'export:Export migration archives'
     'import:Import migration archives'
-    'capture:Capture changes from a global-path installer'
     'rewrite-paths:Rewrite hardcoded OpenCode paths in markdown files'
     'list:List profiles'
     'path:Print profile path'
@@ -2410,7 +2311,7 @@ ___CLI__() {
   fi
 
   case "$words[2]" in
-    run|shell|exec|env|link|capture|rewrite-paths|path|rename|remove|doctor)
+    run|shell|exec|env|link|rewrite-paths|path|rename|remove|doctor)
       if (( CURRENT == 3 )); then
         _describe 'profile' profiles
         return
@@ -2754,7 +2655,6 @@ main() {
     external) cmd_external "$@" ;;
     export) cmd_export "$@" ;;
     import) cmd_import "$@" ;;
-    capture) cmd_capture "${1:-}" "${@:2}" ;;
     rewrite-paths) cmd_rewrite_paths "${1:-}" "${2:-/.config/opencode}" ;;
     list) cmd_list "$@" ;;
     path) cmd_path "$@" ;;
