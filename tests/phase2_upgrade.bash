@@ -31,6 +31,10 @@ grep -Fxq -- '-g' <<< "$completion_output" || fail "upgrade completion did not i
 grep -Fxq -- '--global' <<< "$completion_output" || fail "upgrade completion did not include --global"
 grep -Fxq 'alpha' <<< "$completion_output" || fail "upgrade completion did not include profile names"
 
+upgrade_init_completion="$(bash -c 'source "$1"; COMP_WORDS=(ocp upgrade init ""); COMP_CWORD=3; _ocp_completion; printf "%s\n" "${COMPREPLY[@]}"' _ "$tmp/ocp.bash-completion")"
+grep -Fxq -- '--rewrite-paths' <<< "$upgrade_init_completion" || fail "upgrade init completion did not include --rewrite-paths"
+grep -Fxq -- '--no-rewrite-paths' <<< "$upgrade_init_completion" || fail "upgrade init completion did not include --no-rewrite-paths"
+
 cat > "$alpha_dir/.ocp-recipes" <<'SCRIPT'
 rewrite-paths=false
 printf '%s\n' "$OCP_PROFILE" > profile-name.txt
@@ -75,6 +79,32 @@ assert_file_contains "$alpha_dir/.ocp-recipes" "rewrite-paths=true"
 
 printf 'n\n\n' | "$OCP" upgrade init --force alpha >/dev/null
 assert_file_contains "$alpha_dir/.ocp-recipes" "rewrite-paths=false"
+
+"$OCP" new delta >/dev/null
+delta_dir="$HOME/.opencode-profiles/delta"
+printf '\n' | "$OCP" upgrade init --rewrite-paths delta >/dev/null
+assert_file_contains "$delta_dir/.ocp-recipes" "rewrite-paths=true"
+
+"$OCP" new epsilon >/dev/null
+epsilon_dir="$HOME/.opencode-profiles/epsilon"
+printf '\n' | "$OCP" upgrade init --no-rewrite-paths epsilon >/dev/null
+assert_file_contains "$epsilon_dir/.ocp-recipes" "rewrite-paths=false"
+
+if "$OCP" upgrade init --rewrite-paths --no-rewrite-paths alpha >/dev/null 2>&1; then
+  fail "upgrade init accepted conflicting rewrite-paths flags"
+fi
+
+if "$OCP" upgrade init --rewrite-paths -g >/dev/null 2>&1; then
+  fail "global upgrade init accepted --rewrite-paths"
+fi
+
+if "$OCP" upgrade init --no-rewrite-paths -g >/dev/null 2>&1; then
+  fail "global upgrade init accepted --no-rewrite-paths"
+fi
+
+if "$OCP" upgrade --rewrite-paths alpha >/dev/null 2>&1; then
+  fail "upgrade run accepted --rewrite-paths"
+fi
 
 global_recipe="$XDG_CONFIG_HOME/opencode-profile-kit/global/.ocp-recipes"
 mkdir -p "$(dirname "$global_recipe")"

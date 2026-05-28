@@ -135,7 +135,7 @@ ocp bin repair <command-name|--all>
 
 ocp upgrade <profile>
 ocp upgrade -g
-ocp upgrade init [-f|--force] <profile>
+ocp upgrade init [-f|--force] [--rewrite-paths|--no-rewrite-paths] <profile>
 ocp upgrade init [-f|--force] -g
 ocp upgrade edit <profile>
 ocp upgrade edit -g
@@ -312,6 +312,49 @@ OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
 ```
 
 Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
+
+### Example upgrade recipes
+
+These examples create the profile recipe and then run it. If the recipe already exists, add `--force` to replace it.
+
+Install `oh-my-openagent` into `my-profile`:
+
+```bash
+ocp new my-profile
+ocp upgrade init --no-rewrite-paths my-profile <<'EOF'
+bunx oh-my-openagent install
+EOF
+ocp upgrade my-profile
+```
+
+Install `oh-my-opencode-slim` v2 beta into `my-profile` and enable background subagents for that profile:
+
+```bash
+ocp new my-profile
+ocp upgrade init --no-rewrite-paths my-profile <<'EOF'
+bunx oh-my-opencode-slim@beta install
+ocp env set "${OCP_PROFILE}" OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1
+EOF
+ocp upgrade my-profile
+```
+
+Install `gstack` into `my-profile`:
+
+```bash
+ocp new my-profile
+ocp upgrade init --rewrite-paths my-profile <<'EOF'
+if [ ! -d ~/gstack/.git ]; then
+  git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/gstack
+fi
+cd ~/gstack
+git pull --ff-only
+./setup --host opencode --prefix
+mkdir -p "${OCP_PROFILE_DIR}/skills"
+rm -rf "${OCP_PROFILE_DIR}"/skills/gstack*
+mv "${OCP_GLOBAL_DIR}"/skills/gstack* "${OCP_PROFILE_DIR}/skills/"
+EOF
+ocp upgrade my-profile
+```
 
 ---
 

@@ -58,7 +58,7 @@ Usage:
 
   ocp upgrade <profile>                       Run a profile upgrade recipe
   ocp upgrade -g                              Run the global upgrade recipe
-  ocp upgrade init [-f|--force] <profile>     Create a profile upgrade recipe
+  ocp upgrade init [-f|--force] [--rewrite-paths|--no-rewrite-paths] <profile> Create a profile upgrade recipe
   ocp upgrade init [-f|--force] -g            Create the global upgrade recipe
   ocp upgrade edit <profile>                  Edit a profile upgrade recipe
   ocp upgrade edit -g                         Edit the global upgrade recipe
@@ -1511,7 +1511,7 @@ cmd_upgrade_edit_global() {
 }
 
 cmd_upgrade_init_write() {
-  local recipe="$1" force="$2" global="$3" rewrite="false" command
+  local recipe="$1" force="$2" global="$3" rewrite_choice="$4" rewrite="false" command
   if [[ ( -e "$recipe" || -L "$recipe" ) && "$force" != "1" ]]; then
     fail "recipe already exists: $recipe; use --force"
   fi
@@ -1519,8 +1519,12 @@ cmd_upgrade_init_write() {
     rm -f "$recipe"
   fi
   mkdir -p "$(dirname "$recipe")"
-  if [[ "$global" != "1" ]] && prompt_yes_no "Run rewrite-paths after successful upgrade?"; then
-    rewrite="true"
+  if [[ "$global" != "1" ]]; then
+    case "$rewrite_choice" in
+      yes) rewrite="true" ;;
+      no) rewrite="false" ;;
+      *) prompt_yes_no "Run rewrite-paths after successful upgrade?" && rewrite="true" ;;
+    esac
   fi
   {
     [[ "$global" == "1" ]] || printf 'rewrite-paths=%s\n\n' "$rewrite"
@@ -1535,30 +1539,46 @@ cmd_upgrade_init_write() {
 }
 
 cmd_upgrade_init_dispatch() {
-  local global="$1" force="$2" profile="$3" dir recipe
+  local global="$1" force="$2" rewrite_choice="$3" profile="$4" dir recipe
+  if [[ "$global" == "1" && -n "$rewrite_choice" ]]; then
+    fail "rewrite-paths options cannot be combined with --global"
+  fi
   if [[ "$global" == "1" ]]; then
     [[ -z "$profile" ]] || fail "profile cannot be combined with --global"
     ensure_global_dirs
-    cmd_upgrade_init_write "$(recipe_path_for_global)" "$force" 1
+    cmd_upgrade_init_write "$(recipe_path_for_global)" "$force" 1 ""
   else
     [[ -n "$profile" ]] || fail "profile is required"
     dir="$(require_profile_path "$profile")"
     recipe="$(recipe_path_for_profile_dir "$dir")"
-    cmd_upgrade_init_write "$recipe" "$force" 0
+    cmd_upgrade_init_write "$recipe" "$force" 0 "$rewrite_choice"
   fi
 }
 
 cmd_upgrade() {
-  local sub="${1:-}" global=0 force=0 profile=""
+  local sub="${1:-}" global=0 force=0 rewrite_choice="" profile=""
   case "$sub" in init|edit|show|run) shift ;; *) sub="run" ;;
   esac
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -g|--global) global=1; shift ;;
       -f|--force) force=1; shift ;;
+      --rewrite-paths)
+        [[ -z "$rewrite_choice" || "$rewrite_choice" == "yes" ]] || fail "--rewrite-paths conflicts with --no-rewrite-paths"
+        rewrite_choice="yes"
+        shift
+        ;;
+      --no-rewrite-paths)
+        [[ -z "$rewrite_choice" || "$rewrite_choice" == "no" ]] || fail "--no-rewrite-paths conflicts with --rewrite-paths"
+        rewrite_choice="no"
+        shift
+        ;;
       *) [[ -z "$profile" ]] || fail "usage: ocp upgrade [init|edit|show] [-g|--global] [profile]"; profile="$1"; shift ;;
     esac
   done
+  if [[ "$sub" != "init" && -n "$rewrite_choice" ]]; then
+    fail "rewrite-paths options are only valid for: ocp upgrade init"
+  fi
   if [[ "$global" == "1" && -n "$profile" ]]; then fail "profile cannot be combined with --global"; fi
   if [[ "$sub" == "init" && -n "$profile" ]]; then ensure_profile_name "$profile"; fi
   case "$sub:$global" in
@@ -1568,7 +1588,7 @@ cmd_upgrade() {
     show:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_show_profile "$profile" ;;
     edit:1) cmd_upgrade_edit_global ;;
     edit:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_edit_profile "$profile" ;;
-    init:*) cmd_upgrade_init_dispatch "$global" "$force" "$profile" ;;
+    init:*) cmd_upgrade_init_dispatch "$global" "$force" "$rewrite_choice" "$profile" ;;
   esac
 }
 
@@ -2325,13 +2345,13 @@ ___CLI___completion() {
             init)
               local profiles
               profiles="$(__CLI__ list 2>/dev/null)"
-              COMPREPLY=( $(compgen -W "-f --force -g --global $profiles" -- "$cur") )
+              COMPREPLY=( $(compgen -W "-f --force -g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
               return 0
               ;;
-            edit|show|run|-f|--force)
+            edit|show|run|-f|--force|--rewrite-paths|--no-rewrite-paths)
               local profiles
               profiles="$(__CLI__ list 2>/dev/null)"
-              COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
+              COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
               return 0
               ;;
           esac
@@ -2379,10 +2399,10 @@ ___CLI___completion() {
           return 0
           ;;
         upgrade)
-          if [[ "$prev" == "-f" || "$prev" == "--force" ]]; then
+          if [[ "$prev" == "-f" || "$prev" == "--force" || "$prev" == "--rewrite-paths" || "$prev" == "--no-rewrite-paths" ]]; then
             local profiles
             profiles="$(__CLI__ list 2>/dev/null)"
-            COMPREPLY=( $(compgen -W "-g --global $profiles" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
             return 0
           fi
           ;;
@@ -2543,15 +2563,15 @@ ___CLI__() {
         _describe 'profile' profiles
         return
       elif (( CURRENT == 4 )) && [[ "$words[3]" == "init" ]]; then
-        _values 'upgrade init option' '-f' '--force' '-g' '--global'
+        _values 'upgrade init option' '-f' '--force' '-g' '--global' '--rewrite-paths' '--no-rewrite-paths'
         _describe 'profile' profiles
         return
-      elif (( CURRENT == 4 )) && [[ "$words[3]" == "edit" || "$words[3]" == "show" || "$words[3]" == "run" || "$words[3]" == "-f" || "$words[3]" == "--force" ]]; then
+      elif (( CURRENT == 4 )) && [[ "$words[3]" == "edit" || "$words[3]" == "show" || "$words[3]" == "run" || "$words[3]" == "-f" || "$words[3]" == "--force" || "$words[3]" == "--rewrite-paths" || "$words[3]" == "--no-rewrite-paths" ]]; then
         _values 'upgrade target option' '-g' '--global'
         _describe 'profile' profiles
         return
-      elif (( CURRENT == 5 )) && [[ "$words[3]" == "init" && ( "$words[4]" == "-f" || "$words[4]" == "--force" ) ]]; then
-        _values 'upgrade target option' '-g' '--global'
+      elif (( CURRENT == 5 )) && [[ "$words[3]" == "init" && ( "$words[4]" == "-f" || "$words[4]" == "--force" || "$words[4]" == "--rewrite-paths" || "$words[4]" == "--no-rewrite-paths" ) ]]; then
+        _values 'upgrade target option' '-g' '--global' '--rewrite-paths' '--no-rewrite-paths'
         _describe 'profile' profiles
         return
       fi
