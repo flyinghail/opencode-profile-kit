@@ -90,6 +90,15 @@ epsilon_dir="$HOME/.opencode-profiles/epsilon"
 printf '\n' | "$OCP" upgrade init --no-rewrite-paths epsilon >/dev/null
 assert_file_contains "$epsilon_dir/.ocp-recipes" "rewrite-paths=false"
 
+"$OCP" new zeta >/dev/null
+zeta_output="$("$OCP" upgrade init --no-rewrite-paths zeta 2>&1 <<'SCRIPT'
+bunx oh-my-openagent install
+SCRIPT
+)"
+if grep -Fq 'install command' <<< "$zeta_output"; then
+  fail "non-interactive upgrade init printed install command prompt"
+fi
+
 if "$OCP" upgrade init --rewrite-paths --no-rewrite-paths alpha >/dev/null 2>&1; then
   fail "upgrade init accepted conflicting rewrite-paths flags"
 fi

@@ -1529,7 +1529,7 @@ cmd_upgrade_init_write() {
   {
     [[ "$global" == "1" ]] || printf 'rewrite-paths=%s\n\n' "$rewrite"
     while true; do
-      printf 'install command (blank to finish): ' >&2
+      [[ -t 0 ]] && printf 'install command (blank to finish): ' >&2
       IFS= read -r command || break
       [[ -n "$command" ]] || break
       printf '%s\n' "$command"
@@ -2757,7 +2757,7 @@ cmd_rewrite_paths() {
 
   local files
   files="$(
-    grep -rIl \
+    grep -RIl \
       --include='*.md' \
       --exclude-dir='.git' \
       --exclude-dir='node_modules' \
