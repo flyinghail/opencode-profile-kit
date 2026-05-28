@@ -269,7 +269,7 @@ instead of the global OpenCode config directory.
 
 ## Upgrade Recipes
 
-`ocp upgrade <profile>` runs `$OC_PROFILES_DIR/<profile>/.ocp-recipes` with `OPENCODE_CONFIG_DIR` set to the profile directory and cwd set to the profile directory.
+`ocp upgrade <profile>` runs `$OC_PROFILES_DIR/<profile>/.ocp-recipes` with cwd set to the profile directory.
 
 Create a guided recipe:
 
@@ -291,7 +291,27 @@ ocp upgrade init -g
 ocp upgrade -g
 ```
 
-Recipes are Bash scripts. Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
+Recipes are Bash scripts. Profile recipes get these variables:
+
+```bash
+OCP_TARGET=profile
+OCP_PROFILE=my-profile
+OCP_PROFILE_DIR=$HOME/.opencode-profiles/my-profile
+OCP_GLOBAL_DIR=$HOME/.config/opencode
+OPENCODE_CONFIG_DIR=$OCP_PROFILE_DIR
+```
+
+Global recipes get these variables:
+
+```bash
+OCP_TARGET=global
+OCP_PROFILE=
+OCP_PROFILE_DIR=
+OCP_GLOBAL_DIR=$HOME/.config/opencode
+OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
+```
+
+Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
 
 ---
 

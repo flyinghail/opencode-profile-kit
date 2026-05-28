@@ -1422,7 +1422,7 @@ recipe_body_to_script() {
 }
 
 run_recipe_script() {
-  local target="$1" profile="$2" config_dir="$3" work_dir="$4" recipe="$5" tmp_dir script status=0
+  local target="$1" profile="$2" profile_dir="$3" config_dir="$4" work_dir="$5" recipe="$6" tmp_dir script status=0
   [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe"
   tmp_dir="$(mktemp -d)" || return 1
   script="$tmp_dir/recipe.sh"
@@ -1431,6 +1431,8 @@ run_recipe_script() {
     cd "$work_dir" || exit $?
     export OCP_TARGET="$target"
     export OCP_PROFILE="$profile"
+    export OCP_PROFILE_DIR="$profile_dir"
+    export OCP_GLOBAL_DIR="$OC_GLOBAL_DIR"
     export OPENCODE_CONFIG_DIR="$config_dir"
     bash "$script"
   ) || status=$?
@@ -1446,7 +1448,7 @@ cmd_upgrade_run_profile() {
   if recipe_rewrite_paths_enabled "$recipe"; then
     rewrite_paths=1
   fi
-  run_recipe_script "profile" "$profile" "$dir" "$dir" "$recipe"
+  run_recipe_script "profile" "$profile" "$dir" "$dir" "$dir" "$recipe"
   if [[ "$rewrite_paths" == "1" ]]; then
     cmd_rewrite_paths "$profile"
   fi
@@ -1459,7 +1461,7 @@ cmd_upgrade_run_global() {
   global_dir="$(global_config_dir)"
   [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init -g"
   recipe_rewrite_paths_enabled "$recipe" && fail "rewrite-paths=true is invalid for global recipes"
-  run_recipe_script "global" "" "$global_dir" "$global_dir" "$recipe"
+  run_recipe_script "global" "" "" "$global_dir" "$global_dir" "$recipe"
 }
 
 cmd_upgrade_show_profile() {
