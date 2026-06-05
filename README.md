@@ -1,5 +1,7 @@
 # OpenCode Profile Kit
 
+Language: [English](README.md) | [简体中文](README.zh-CN.md)
+
 `opencode-profile-kit` is a lightweight runtime profile manager for OpenCode.
 
 It treats each profile as an isolated `OPENCODE_CONFIG_DIR` runtime instead of mutating a shared global configuration.
