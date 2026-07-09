@@ -8,9 +8,7 @@ Agents, skills, plugins, MCP servers, and instructions often work best as stacks
 
 OpenCode already has the right foundation for this: a profile config can layer on top of the global config instead of replacing it. That makes OpenCode especially good for multi-agent workflows compared with tools that only support fully separate config directories.
 
-`opencode-profile-kit` does not invent that model. It makes it practical.
-
-It gives each stack an isolated, switchable OpenCode profile, while preserving the shared base that OpenCode itself provides: sessions, common plugins, common skills, and global configuration.
+`opencode-profile-kit` turns that foundation into isolated, switchable profiles for each stack, while preserving the shared base that OpenCode itself provides: sessions, common plugins, common skills, and global configuration.
 
 The core model is:
 
