@@ -319,32 +319,32 @@ OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
 
 这些示例会创建 profile 配方，然后运行它。如果配方已经存在，添加 `--force` 来替换。
 
-将 `oh-my-openagent` 安装到 `my-profile`:
+将 `oh-my-openagent` 安装到 `oma`:
 
 ```bash
-ocp new my-profile
-ocp upgrade init --no-rewrite-paths my-profile <<'EOF'
+ocp new oma
+ocp upgrade init --no-rewrite-paths oma <<'EOF'
 bunx oh-my-openagent install
 EOF
-ocp upgrade my-profile
+ocp upgrade oma
 ```
 
-将 `oh-my-opencode-slim` v2 beta 安装到 `my-profile`，并为该 profile 启用后台 subagent:
+将正式版 `oh-my-opencode-slim` v2 安装到 `oos`，并为该 profile 启用后台 subagent:
 
 ```bash
-ocp new my-profile
-ocp upgrade init --no-rewrite-paths my-profile <<'EOF'
-bunx oh-my-opencode-slim@beta install
+ocp new oos
+ocp upgrade init --no-rewrite-paths oos <<'EOF'
+bunx oh-my-opencode-slim@latest install
 ocp env set "${OCP_PROFILE}" OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1
 EOF
-ocp upgrade my-profile
+ocp upgrade oos
 ```
 
-将 `gstack` 安装到 `my-profile`:
+将 `gstack` 安装到 `gs`:
 
 ```bash
-ocp new my-profile
-ocp upgrade init --rewrite-paths my-profile <<'EOF'
+ocp new gs
+ocp upgrade init --rewrite-paths gs <<'EOF'
 if [ ! -d ~/gstack/.git ]; then
   git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/gstack
 fi
@@ -355,7 +355,7 @@ mkdir -p "${OCP_PROFILE_DIR}/skills"
 rm -rf "${OCP_PROFILE_DIR}"/skills/gstack*
 mv "${OCP_GLOBAL_DIR}"/skills/gstack* "${OCP_PROFILE_DIR}/skills/"
 EOF
-ocp upgrade my-profile
+ocp upgrade gs
 ```
 
 ---
