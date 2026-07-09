@@ -2,28 +2,31 @@
 
 语言: [English](README.md) | [简体中文](README.zh-CN.md)
 
-`opencode-profile-kit` 是 OpenCode 的轻量级运行时 profile 管理器。
+运行多个 OpenCode agent stack，同时避免它们互相冲突。
 
-它将每个 profile 作为隔离的 `OPENCODE_CONFIG_DIR` 运行时，而不是修改共享的全局配置。
+Agent、skill、插件、MCP server 和指令通常会以 stack 的形式组合使用。但随着 stack 变多，它们很容易互相影响：不同的 prompt、工具、插件、权限和环境变量，并不总是适合放在同一套共享配置里。
 
-这让你更容易为不同工作流、agent stack、插件、MCP server 和指令环境管理多个 OpenCode 配置。
+OpenCode 本身已经具备适合这个场景的基础能力：profile config 可以叠加在 global config 之上，而不是替换 global config。相比只支持完全独立 config directory 的工具，这让 OpenCode 更适合多 agent 工作流。
 
-核心思路是:
+`opencode-profile-kit` 并不是发明这套模型，而是让它变得实用。
+
+它让每个 stack 都拥有隔离、可切换的 OpenCode profile，同时保留 OpenCode 自身提供的共享基础：session、通用插件、通用 skill 和全局配置。
+
+核心模型是:
 
 ```text
-one profile = one isolated OPENCODE_CONFIG_DIR runtime
+OpenCode global config + OpenCode profile config = shared base + isolated stack
 ```
 
-这会带来:
+你可以用它来:
 
-- agent stack 之间更安全的隔离
-- 更快地切换工作流
-- 可重复创建 profile
-- 通过符号链接共享配置
-- 生成 profile 启动命令
-- 基于已知 profile 的 shell 补全
+- 隔离互相冲突的 agent/skill stack
+- 快速切换不同的 OpenCode runtime
+- 共享通用 session、插件、skill 和基础配置
+- 将 profile 专属的插件、skill、MCP server 和环境变量分开管理
+- 在不破坏日常配置的前提下试验新 stack
 
-这个工具面向希望 OpenCode profile 管理稳定、纯本地、透明且可脚本化的用户。
+所有东西都保持本地、透明、可脚本化。
 
 ---
 

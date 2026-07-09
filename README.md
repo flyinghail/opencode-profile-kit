@@ -2,28 +2,31 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-`opencode-profile-kit` is a lightweight runtime profile manager for OpenCode.
+Run multiple OpenCode agent stacks without letting them conflict.
 
-It treats each profile as an isolated `OPENCODE_CONFIG_DIR` runtime instead of mutating a shared global configuration.
+Agents, skills, plugins, MCP servers, and instructions often work best as stacks. But as those stacks grow, they can interfere with each other: different prompts, tools, plugins, permissions, and environment variables do not always belong in one shared setup.
 
-This makes it easier to manage multiple OpenCode setups for different workflows, agent stacks, plugins, MCP servers, and instruction environments.
+OpenCode already has the right foundation for this: a profile config can layer on top of the global config instead of replacing it. That makes OpenCode especially good for multi-agent workflows compared with tools that only support fully separate config directories.
 
-The core idea is:
+`opencode-profile-kit` does not invent that model. It makes it practical.
+
+It gives each stack an isolated, switchable OpenCode profile, while preserving the shared base that OpenCode itself provides: sessions, common plugins, common skills, and global configuration.
+
+The core model is:
 
 ```text
-one profile = one isolated OPENCODE_CONFIG_DIR runtime
+OpenCode global config + OpenCode profile config = shared base + isolated stack
 ```
 
-That gives you:
+Use it to:
 
-- safer isolation between agent stacks
-- faster switching between workflows
-- repeatable profile creation
-- shared config through symlinks
-- generated profile launch commands
-- shell completion based on known profiles
+- keep conflicting agent/skill stacks isolated
+- switch between different OpenCode runtimes quickly
+- share common sessions, plugins, skills, and base config
+- keep profile-specific plugins, skills, MCP servers, and env vars separate
+- experiment with new stacks without breaking your daily setup
 
-This tool is for people who want OpenCode profile management to be boring, local, transparent, and scriptable.
+Everything stays local, transparent, and scriptable.
 
 ---
 
