@@ -355,7 +355,7 @@ ocp upgrade oos
 ```bash
 ocp new matt
 ocp upgrade init --rewrite-paths matt <<'EOF'
-npx skills add https://github.com/mattpocock/skills
+npx skills add mattpocock/skills
 EOF
 ocp upgrade matt
 ```
