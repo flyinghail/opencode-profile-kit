@@ -138,7 +138,7 @@ ocp bin repair <command-name|--all>
 
 ocp upgrade <profile>
 ocp upgrade -g
-ocp upgrade init [-f|--force] [--rewrite-paths|--no-rewrite-paths] <profile>
+ocp upgrade init [-f|--force] [--rewrite-paths] [--no-isolate-skills] <profile>
 ocp upgrade init [-f|--force] -g
 ocp upgrade edit <profile>
 ocp upgrade edit -g
@@ -314,7 +314,16 @@ OCP_GLOBAL_DIR=$HOME/.config/opencode
 OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
 ```
 
-当生成的 markdown 需要在所有命令成功后重写路径时，可在 profile 配方中把 `rewrite-paths=true` 作为第一行非注释内容。`rewrite-paths=true` 对全局配方无效。
+Profile 配方默认隔离新安装的 agent skills。运行配方前，`ocp` 会记录 `~/.agents/skills` 下的一级条目；运行后，只把本次新增的条目移动到 profile 的 `skills/` 目录。升级前已经存在的全局 skills 不会被移动。即使配方失败也会执行这项清理，因此在后续命令失败前已安装的 skill 不会残留为全局 skill。
+
+配方设置是命令正文前的可选 header。省略时使用 profile 默认值: `isolate-skills=true`、`rewrite-paths=false`。只有覆盖默认值时才需要写入:
+
+```bash
+rewrite-paths=true
+isolate-skills=false
+```
+
+使用 `upgrade init --rewrite-paths` 写入第一项覆盖，或使用 `--no-isolate-skills` 写入第二项。只有配方与 skill 隔离都成功后才会重写路径。这些设置对全局配方无效；全局配方的两项默认值均为 `false`。
 
 ### 升级配方示例
 
@@ -324,7 +333,7 @@ OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
 
 ```bash
 ocp new oma
-ocp upgrade init --no-rewrite-paths oma <<'EOF'
+ocp upgrade init oma <<'EOF'
 bunx oh-my-openagent install
 EOF
 ocp upgrade oma
@@ -334,12 +343,24 @@ ocp upgrade oma
 
 ```bash
 ocp new oos
-ocp upgrade init --no-rewrite-paths oos <<'EOF'
+ocp upgrade init oos <<'EOF'
 bunx oh-my-opencode-slim@latest install
 ocp env set "${OCP_PROFILE}" OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1
 EOF
 ocp upgrade oos
 ```
+
+把 `mattpocock/skills` 中的 skills 安装到 `matt`，而不让它们全局可用:
+
+```bash
+ocp new matt
+ocp upgrade init --rewrite-paths matt <<'EOF'
+npx skills add https://github.com/mattpocock/skills
+EOF
+ocp upgrade matt
+```
+
+这也会把生成的 markdown 中 `~/.agents/skills/...` 引用改写为 `~/.opencode-profiles/matt/skills/...`。当一个 profile 需要多个来源的 skills 时，可以在同一配方中多次运行 `npx skills add`。
 
 将 `gstack` 安装到 `gs`:
 
@@ -470,7 +491,15 @@ ocp rewrite-paths my-profile /.config/opencode/agents
 ocp rewrite-paths my-profile /.config/opencode/commands
 ```
 
-对于新的全局路径安装器工作流，优先使用 [升级配方](#升级配方) 中的显式配方，并在生成的 markdown 需要在成功升级后重写时启用 `rewrite-paths=true`。
+对于 `npx skills add` 安装的 skills，也支持精确的 agent skills 根路径:
+
+```bash
+ocp rewrite-paths my-profile /.agents/skills
+```
+
+这会把 `~/.agents/skills/...` 映射为 `~/.opencode-profiles/my-profile/skills/...`，不会保留 `.agents` 这一层目录。
+
+对于新的全局路径安装器工作流，优先使用 [升级配方](#升级配方) 中的显式配方，并在成功升级后需要重写生成的 markdown 时使用 `--rewrite-paths`。默认 skill 隔离开启时，upgrade 会先移动新安装的 skills，再同时重写 `/.config/opencode` 与 `/.agents/skills`。
 
 升级配方工作流:
 

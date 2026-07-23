@@ -138,7 +138,7 @@ ocp bin repair <command-name|--all>
 
 ocp upgrade <profile>
 ocp upgrade -g
-ocp upgrade init [-f|--force] [--rewrite-paths|--no-rewrite-paths] <profile>
+ocp upgrade init [-f|--force] [--rewrite-paths] [--no-isolate-skills] <profile>
 ocp upgrade init [-f|--force] -g
 ocp upgrade edit <profile>
 ocp upgrade edit -g
@@ -314,7 +314,16 @@ OCP_GLOBAL_DIR=$HOME/.config/opencode
 OPENCODE_CONFIG_DIR=$OCP_GLOBAL_DIR
 ```
 
-Use `rewrite-paths=true` as the first non-comment line for profile recipes when generated markdown should be rewritten after all commands succeed. `rewrite-paths=true` is invalid for global recipes.
+Profile recipes isolate newly installed agent skills by default. Before running the recipe, `ocp` records the top-level entries under `~/.agents/skills`. Afterward, it moves only newly added entries into the profile's `skills/` directory. Skills that were already global are left untouched. This cleanup also runs when the recipe fails, so a skill installed before a later failing command does not remain global.
+
+Recipe settings are optional headers before the commands. Omitted settings use the profile defaults: `isolate-skills=true` and `rewrite-paths=false`. Only overrides need to be written:
+
+```bash
+rewrite-paths=true
+isolate-skills=false
+```
+
+Use `--rewrite-paths` with `upgrade init` to write the first override, or `--no-isolate-skills` to write the second. Path rewriting runs only after the recipe and skill isolation both succeed. These settings are invalid for global recipes, whose defaults are both `false`.
 
 ### Example upgrade recipes
 
@@ -324,7 +333,7 @@ Install `oh-my-openagent` into `oma`:
 
 ```bash
 ocp new oma
-ocp upgrade init --no-rewrite-paths oma <<'EOF'
+ocp upgrade init oma <<'EOF'
 bunx oh-my-openagent install
 EOF
 ocp upgrade oma
@@ -334,12 +343,24 @@ Install the stable `oh-my-opencode-slim@v2` into `oos` and enable background sub
 
 ```bash
 ocp new oos
-ocp upgrade init --no-rewrite-paths oos <<'EOF'
+ocp upgrade init oos <<'EOF'
 bunx oh-my-opencode-slim@latest install
 ocp env set "${OCP_PROFILE}" OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1
 EOF
 ocp upgrade oos
 ```
+
+Install the skills from `mattpocock/skills` into `matt` without exposing them globally:
+
+```bash
+ocp new matt
+ocp upgrade init --rewrite-paths matt <<'EOF'
+npx skills add https://github.com/mattpocock/skills
+EOF
+ocp upgrade matt
+```
+
+This also rewrites generated markdown references from `~/.agents/skills/...` to `~/.opencode-profiles/matt/skills/...`. Run `npx skills add` multiple times in the same recipe when a profile needs skills from multiple sources.
 
 Install `gstack` into `gs`:
 
@@ -470,7 +491,15 @@ ocp rewrite-paths my-profile /.config/opencode/agents
 ocp rewrite-paths my-profile /.config/opencode/commands
 ```
 
-For new global-path installer workflows, prefer an explicit recipe under [Upgrade Recipes](#upgrade-recipes) and enable `rewrite-paths=true` when generated markdown should be rewritten after a successful upgrade.
+For skills installed by `npx skills add`, the exact agent skills root is also supported:
+
+```bash
+ocp rewrite-paths my-profile /.agents/skills
+```
+
+This maps `~/.agents/skills/...` to `~/.opencode-profiles/my-profile/skills/...` rather than preserving the `.agents` directory.
+
+For new global-path installer workflows, prefer an explicit recipe under [Upgrade Recipes](#upgrade-recipes) and use `--rewrite-paths` when generated markdown should be rewritten after a successful upgrade. With the default skill isolation enabled, upgrade rewrites both `/.config/opencode` and `/.agents/skills` after moving newly installed skills.
 
 Upgrade recipe workflow:
 

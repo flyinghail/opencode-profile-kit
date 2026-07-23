@@ -58,7 +58,7 @@ Usage:
 
   ocp upgrade <profile>                       Run a profile upgrade recipe
   ocp upgrade -g                              Run the global upgrade recipe
-  ocp upgrade init [-f|--force] [--rewrite-paths|--no-rewrite-paths] <profile> Create a profile upgrade recipe
+  ocp upgrade init [-f|--force] [--rewrite-paths] [--no-isolate-skills] <profile> Create a profile upgrade recipe
   ocp upgrade init [-f|--force] -g            Create the global upgrade recipe
   ocp upgrade edit <profile>                  Edit a profile upgrade recipe
   ocp upgrade edit -g                         Edit the global upgrade recipe
@@ -127,7 +127,7 @@ expand_home_path() {
     "~")
       printf '%s\n' "$HOME"
       ;;
-    "~/"*)
+    [~]/*)
       printf '%s/%s\n' "$HOME" "${path#"~/"}"
       ;;
     "\$HOME")
@@ -1401,36 +1401,92 @@ cmd_doctor() {
   fi
 }
 
-recipe_rewrite_paths_enabled() {
-  local recipe="$1" first
-  first="$(grep -v '^[[:space:]]*#' "$recipe" | sed '/^[[:space:]]*$/d' | head -n 1 || true)"
-  case "$first" in
-    rewrite-paths=true) return 0 ;;
-    rewrite-paths=false|"") return 1 ;;
-    rewrite-paths=*) fail "invalid recipe header: $first" ;;
-    *) return 1 ;;
-  esac
+recipe_option_value() {
+  local recipe option default line value seen=0
+  recipe="$1"
+  option="$2"
+  default="$3"
+  value="$default"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+      continue
+    fi
+    case "$line" in
+      rewrite-paths=*|isolate-skills=*)
+        [[ "${line%%=*}" == "$option" ]] || continue
+        (( seen == 0 )) || fail "duplicate recipe header: $option"
+        value="${line#*=}"
+        case "$value" in true|false) ;; *) fail "invalid recipe header: $line" ;; esac
+        seen=1
+        ;;
+      *) break ;;
+    esac
+  done < "$recipe"
+  printf '%s\n' "$value"
+}
+
+recipe_option_present() {
+  local recipe="$1" option="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+      continue
+    fi
+    case "$line" in
+      rewrite-paths=*|isolate-skills=*)
+        [[ "${line%%=*}" == "$option" ]] && return 0
+        ;;
+      *) return 1 ;;
+    esac
+  done < "$recipe"
+  return 1
 }
 
 recipe_body_to_script() {
-  local recipe="$1" output="$2" skipped=0 line first_seen=0
+  local recipe="$1" output="$2" line in_header=1
   : > "$output"
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$first_seen" == "0" && "$line" =~ ^[[:space:]]*# ]]; then
-      printf '%s\n' "$line" >> "$output"
-      continue
-    fi
-    if [[ "$first_seen" == "0" && "$line" =~ ^[[:space:]]*$ ]]; then
-      printf '%s\n' "$line" >> "$output"
-      continue
-    fi
-    first_seen=1
-    if [[ "$skipped" == "0" && "$line" == rewrite-paths=* ]]; then
-      skipped=1
-      continue
+    if [[ "$in_header" == "1" ]]; then
+      if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        printf '%s\n' "$line" >> "$output"
+        continue
+      fi
+      case "$line" in
+        rewrite-paths=*|isolate-skills=*) continue ;;
+        *) in_header=0 ;;
+      esac
     fi
     printf '%s\n' "$line" >> "$output"
   done < "$recipe"
+}
+
+snapshot_agent_skills() {
+  local output="$1" entry
+  : > "$output"
+  [[ -d "$HOME/.agents/skills" ]] || return 0
+  while IFS= read -r -d '' entry; do
+    basename "$entry"
+  done < <(find "$HOME/.agents/skills" -mindepth 1 -maxdepth 1 -print0) > "$output"
+}
+
+move_new_agent_skills() {
+  local before="$1" profile_dir="$2" source name destination status=0
+  [[ -d "$HOME/.agents/skills" ]] || return 0
+  while IFS= read -r -d '' source; do
+    name="$(basename "$source")"
+    grep -Fxq -- "$name" "$before" && continue
+    if ! mkdir -p "$profile_dir/skills"; then
+      echo "ocp: could not create profile skills directory: $profile_dir/skills" >&2
+      return 1
+    fi
+    destination="$profile_dir/skills/$name"
+    if ! rm -rf -- "$destination" || ! mv -- "$source" "$destination"; then
+      echo "ocp: could not isolate skill: $source -> $destination" >&2
+      status=1
+      continue
+    fi
+    echo "isolated skill: $name -> $destination"
+  done < <(find "$HOME/.agents/skills" -mindepth 1 -maxdepth 1 -print0)
+  return "$status"
 }
 
 run_recipe_script() {
@@ -1453,17 +1509,29 @@ run_recipe_script() {
 }
 
 cmd_upgrade_run_profile() {
-  local profile="$1" dir recipe rewrite_paths=0
+  local profile="$1" dir recipe rewrite_paths isolate_skills snapshot="" recipe_status=0 move_status=0
   dir="$(require_profile_path "$profile")"
   recipe="$(recipe_path_for_profile_dir "$dir")"
   [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init $profile"
-  if recipe_rewrite_paths_enabled "$recipe"; then
-    rewrite_paths=1
+  rewrite_paths="$(recipe_option_value "$recipe" rewrite-paths false)"
+  isolate_skills="$(recipe_option_value "$recipe" isolate-skills true)"
+  if [[ "$isolate_skills" == "true" ]]; then
+    snapshot="$(mktemp)"
+    snapshot_agent_skills "$snapshot"
   fi
-  run_recipe_script "profile" "$profile" "$dir" "$dir" "$dir" "$recipe"
-  if [[ "$rewrite_paths" == "1" ]]; then
+  run_recipe_script "profile" "$profile" "$dir" "$dir" "$dir" "$recipe" || recipe_status=$?
+  if [[ "$isolate_skills" == "true" ]]; then
+    move_new_agent_skills "$snapshot" "$dir" || move_status=$?
+    rm -f "$snapshot"
+  fi
+  if [[ "$recipe_status" == "0" && "$move_status" == "0" && "$rewrite_paths" == "true" ]]; then
     cmd_rewrite_paths "$profile"
+    if [[ "$isolate_skills" == "true" ]]; then
+      cmd_rewrite_paths "$profile" "/.agents/skills"
+    fi
   fi
+  (( recipe_status == 0 )) || return "$recipe_status"
+  return "$move_status"
 }
 
 cmd_upgrade_run_global() {
@@ -1472,7 +1540,8 @@ cmd_upgrade_run_global() {
   recipe="$(recipe_path_for_global)"
   global_dir="$(global_config_dir)"
   [[ -f "$recipe" ]] || fail "recipe does not exist: $recipe; run: ocp upgrade init -g"
-  recipe_rewrite_paths_enabled "$recipe" && fail "rewrite-paths=true is invalid for global recipes"
+  [[ "$(recipe_option_value "$recipe" rewrite-paths false)" == "false" ]] || fail "rewrite-paths=true is invalid for global recipes"
+  recipe_option_present "$recipe" isolate-skills && fail "isolate-skills is invalid for global recipes"
   run_recipe_script "global" "" "" "$global_dir" "$global_dir" "$recipe"
 }
 
@@ -1496,7 +1565,7 @@ cmd_upgrade_edit_profile() {
   local dir recipe editor
   dir="$(require_profile_path "$1")"
   recipe="$(recipe_path_for_profile_dir "$dir")"
-  [[ -f "$recipe" ]] || printf 'rewrite-paths=false\n\n' > "$recipe"
+  [[ -f "$recipe" ]] || printf '\n' > "$recipe"
   editor="${EDITOR:-vi}"
   "$editor" "$recipe"
 }
@@ -1511,7 +1580,7 @@ cmd_upgrade_edit_global() {
 }
 
 cmd_upgrade_init_write() {
-  local recipe="$1" force="$2" global="$3" rewrite_choice="$4" rewrite="false" command
+  local recipe="$1" force="$2" global="$3" rewrite_choice="$4" isolate_choice="$5" command
   if [[ ( -e "$recipe" || -L "$recipe" ) && "$force" != "1" ]]; then
     fail "recipe already exists: $recipe; use --force"
   fi
@@ -1519,15 +1588,10 @@ cmd_upgrade_init_write() {
     rm -f "$recipe"
   fi
   mkdir -p "$(dirname "$recipe")"
-  if [[ "$global" != "1" ]]; then
-    case "$rewrite_choice" in
-      yes) rewrite="true" ;;
-      no) rewrite="false" ;;
-      *) prompt_yes_no "Run rewrite-paths after successful upgrade?" && rewrite="true" ;;
-    esac
-  fi
   {
-    [[ "$global" == "1" ]] || printf 'rewrite-paths=%s\n\n' "$rewrite"
+    [[ "$rewrite_choice" == "yes" ]] && printf 'rewrite-paths=true\n'
+    [[ "$isolate_choice" == "no" ]] && printf 'isolate-skills=false\n'
+    [[ "$global" == "1" || ( -z "$rewrite_choice" && -z "$isolate_choice" ) ]] || printf '\n'
     while true; do
       [[ -t 0 ]] && printf 'install command (blank to finish): ' >&2
       IFS= read -r command || break
@@ -1539,24 +1603,24 @@ cmd_upgrade_init_write() {
 }
 
 cmd_upgrade_init_dispatch() {
-  local global="$1" force="$2" rewrite_choice="$3" profile="$4" dir recipe
-  if [[ "$global" == "1" && -n "$rewrite_choice" ]]; then
-    fail "rewrite-paths options cannot be combined with --global"
+  local global="$1" force="$2" rewrite_choice="$3" isolate_choice="$4" profile="$5" dir recipe
+  if [[ "$global" == "1" && ( -n "$rewrite_choice" || -n "$isolate_choice" ) ]]; then
+    fail "profile upgrade options cannot be combined with --global"
   fi
   if [[ "$global" == "1" ]]; then
     [[ -z "$profile" ]] || fail "profile cannot be combined with --global"
     ensure_global_dirs
-    cmd_upgrade_init_write "$(recipe_path_for_global)" "$force" 1 ""
+    cmd_upgrade_init_write "$(recipe_path_for_global)" "$force" 1 "" ""
   else
     [[ -n "$profile" ]] || fail "profile is required"
     dir="$(require_profile_path "$profile")"
     recipe="$(recipe_path_for_profile_dir "$dir")"
-    cmd_upgrade_init_write "$recipe" "$force" 0 "$rewrite_choice"
+    cmd_upgrade_init_write "$recipe" "$force" 0 "$rewrite_choice" "$isolate_choice"
   fi
 }
 
 cmd_upgrade() {
-  local sub="${1:-}" global=0 force=0 rewrite_choice="" profile=""
+  local sub="${1:-}" global=0 force=0 rewrite_choice="" isolate_choice="" profile=""
   case "$sub" in init|edit|show|run) shift ;; *) sub="run" ;;
   esac
   while [[ $# -gt 0 ]]; do
@@ -1564,20 +1628,19 @@ cmd_upgrade() {
       -g|--global) global=1; shift ;;
       -f|--force) force=1; shift ;;
       --rewrite-paths)
-        [[ -z "$rewrite_choice" || "$rewrite_choice" == "yes" ]] || fail "--rewrite-paths conflicts with --no-rewrite-paths"
         rewrite_choice="yes"
         shift
         ;;
-      --no-rewrite-paths)
-        [[ -z "$rewrite_choice" || "$rewrite_choice" == "no" ]] || fail "--no-rewrite-paths conflicts with --rewrite-paths"
-        rewrite_choice="no"
+      --no-isolate-skills)
+        isolate_choice="no"
         shift
         ;;
+      -*) fail "unknown option for upgrade: $1" ;;
       *) [[ -z "$profile" ]] || fail "usage: ocp upgrade [init|edit|show] [-g|--global] [profile]"; profile="$1"; shift ;;
     esac
   done
-  if [[ "$sub" != "init" && -n "$rewrite_choice" ]]; then
-    fail "rewrite-paths options are only valid for: ocp upgrade init"
+  if [[ "$sub" != "init" && ( -n "$rewrite_choice" || -n "$isolate_choice" ) ]]; then
+    fail "upgrade options are only valid for: ocp upgrade init"
   fi
   if [[ "$global" == "1" && -n "$profile" ]]; then fail "profile cannot be combined with --global"; fi
   if [[ "$sub" == "init" && -n "$profile" ]]; then ensure_profile_name "$profile"; fi
@@ -1588,7 +1651,7 @@ cmd_upgrade() {
     show:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_show_profile "$profile" ;;
     edit:1) cmd_upgrade_edit_global ;;
     edit:0) [[ -n "$profile" ]] || fail "profile is required"; cmd_upgrade_edit_profile "$profile" ;;
-    init:*) cmd_upgrade_init_dispatch "$global" "$force" "$rewrite_choice" "$profile" ;;
+    init:*) cmd_upgrade_init_dispatch "$global" "$force" "$rewrite_choice" "$isolate_choice" "$profile" ;;
   esac
 }
 
@@ -2049,15 +2112,15 @@ create_export_archive() {
 }
 
 profile_export_names() {
-  local profiles=()
+  local profile_names=()
   while IFS= read -r profile; do
-    [[ -n "$profile" ]] && profiles+=("$profile")
+    [[ -n "$profile" ]] && profile_names+=("$profile")
   done < <(cmd_list)
-  printf '%s\n' "${profiles[@]}"
+  printf '%s\n' "${profile_names[@]}"
 }
 
 cmd_export() {
-  local all=0 global=0 force=0 profile="" file="" kind profiles="" profile_list=""
+  local all=0 global=0 force=0 profile="" file="" kind metadata_profiles="" profile_list=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -a|--all) all=1; shift ;;
@@ -2093,7 +2156,7 @@ cmd_export() {
   if [[ "$all" == "1" ]]; then
     profile_list="$(profile_export_names)"
     [[ -n "$profile_list" ]] || fail "no profiles to export"
-    profiles="${profile_list//$'\n'/ }"
+    metadata_profiles="${profile_list//$'\n'/ }"
   fi
 
   if [[ -z "$file" ]]; then
@@ -2131,11 +2194,11 @@ cmd_export() {
     stage_global_export "$stage"
   else
     kind="profile"
-    profiles="$profile"
+    metadata_profiles="$profile"
     stage_profile_export "$profile" "$stage"
   fi
 
-  write_archive_metadata "$stage/metadata.env" "$kind" "$profiles" "$global"
+  write_archive_metadata "$stage/metadata.env" "$kind" "$metadata_profiles" "$global"
   create_export_archive "$stage" "$file" || {
     status=$?
     rm -rf "$stage"
@@ -2345,13 +2408,13 @@ ___CLI___completion() {
             init)
               local profiles
               profiles="$(__CLI__ list 2>/dev/null)"
-              COMPREPLY=( $(compgen -W "-f --force -g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
+              COMPREPLY=( $(compgen -W "-f --force -g --global --rewrite-paths --no-isolate-skills $profiles" -- "$cur") )
               return 0
               ;;
-            edit|show|run|-f|--force|--rewrite-paths|--no-rewrite-paths)
+            edit|show|run|-f|--force|--rewrite-paths|--no-isolate-skills)
               local profiles
               profiles="$(__CLI__ list 2>/dev/null)"
-              COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
+              COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-isolate-skills $profiles" -- "$cur") )
               return 0
               ;;
           esac
@@ -2399,10 +2462,10 @@ ___CLI___completion() {
           return 0
           ;;
         upgrade)
-          if [[ "$prev" == "-f" || "$prev" == "--force" || "$prev" == "--rewrite-paths" || "$prev" == "--no-rewrite-paths" ]]; then
+          if [[ "$prev" == "-f" || "$prev" == "--force" || "$prev" == "--rewrite-paths" || "$prev" == "--no-isolate-skills" ]]; then
             local profiles
             profiles="$(__CLI__ list 2>/dev/null)"
-            COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-rewrite-paths $profiles" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-g --global --rewrite-paths --no-isolate-skills $profiles" -- "$cur") )
             return 0
           fi
           ;;
@@ -2563,15 +2626,15 @@ ___CLI__() {
         _describe 'profile' profiles
         return
       elif (( CURRENT == 4 )) && [[ "$words[3]" == "init" ]]; then
-        _values 'upgrade init option' '-f' '--force' '-g' '--global' '--rewrite-paths' '--no-rewrite-paths'
+        _values 'upgrade init option' '-f' '--force' '-g' '--global' '--rewrite-paths' '--no-isolate-skills'
         _describe 'profile' profiles
         return
-      elif (( CURRENT == 4 )) && [[ "$words[3]" == "edit" || "$words[3]" == "show" || "$words[3]" == "run" || "$words[3]" == "-f" || "$words[3]" == "--force" || "$words[3]" == "--rewrite-paths" || "$words[3]" == "--no-rewrite-paths" ]]; then
+      elif (( CURRENT == 4 )) && [[ "$words[3]" == "edit" || "$words[3]" == "show" || "$words[3]" == "run" || "$words[3]" == "-f" || "$words[3]" == "--force" || "$words[3]" == "--rewrite-paths" || "$words[3]" == "--no-isolate-skills" ]]; then
         _values 'upgrade target option' '-g' '--global'
         _describe 'profile' profiles
         return
-      elif (( CURRENT == 5 )) && [[ "$words[3]" == "init" && ( "$words[4]" == "-f" || "$words[4]" == "--force" || "$words[4]" == "--rewrite-paths" || "$words[4]" == "--no-rewrite-paths" ) ]]; then
-        _values 'upgrade target option' '-g' '--global' '--rewrite-paths' '--no-rewrite-paths'
+      elif (( CURRENT == 5 )) && [[ "$words[3]" == "init" && ( "$words[4]" == "-f" || "$words[4]" == "--force" || "$words[4]" == "--rewrite-paths" || "$words[4]" == "--no-isolate-skills" ) ]]; then
+        _values 'upgrade target option' '-g' '--global' '--rewrite-paths' '--no-isolate-skills'
         _describe 'profile' profiles
         return
       fi
@@ -2735,18 +2798,18 @@ cmd_rewrite_paths() {
    exit 1
   }
 
-  [[ "$suffix" == /.config/opencode* ]] || {
-   echo "unsupported suffix: $suffix" >&2
-   echo "expected: /.config/opencode or /.config/opencode/..." >&2
-   exit 1
-  }
-
   local replacement_suffix
   replacement_suffix="$(profile_replacement_suffix "$profile")"
-
-  if [[ "$suffix" != "/.config/opencode" ]]; then
-   replacement_suffix="$replacement_suffix/${suffix#/.config/opencode/}"
-  fi
+  case "$suffix" in
+    /.config/opencode) ;;
+    /.config/opencode/*) replacement_suffix="$replacement_suffix/${suffix#/.config/opencode/}" ;;
+    /.agents/skills) replacement_suffix="$replacement_suffix/skills" ;;
+    *)
+      echo "unsupported suffix: $suffix" >&2
+      echo "expected: /.config/opencode, /.config/opencode/..., or /.agents/skills" >&2
+      exit 1
+      ;;
+  esac
 
   echo "[ocp] rewriting hardcoded OpenCode paths in markdown files"
   echo "profile:     $profile"
